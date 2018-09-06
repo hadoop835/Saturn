@@ -37,8 +37,9 @@ public class SaturnConsoleApp {
 
 	private static TestingServer embeddedZookeeper;
 	private static EmbeddedDatabase embeddedDatabase;
-
+ //ces
 	public static void main(String[] args) throws Exception {
+
 		if (Boolean.getBoolean("saturn.embeddedZk")) {
 			startEmbeddedZk();
 		}
