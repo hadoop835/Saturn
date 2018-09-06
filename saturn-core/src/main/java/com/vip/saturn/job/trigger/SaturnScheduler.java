@@ -1,17 +1,16 @@
 /**
- * 
+ *
  */
 package com.vip.saturn.job.trigger;
+
+import com.vip.saturn.job.basic.AbstractElasticJob;
+import org.quartz.SchedulerException;
+import org.quartz.Trigger;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
-
-import org.quartz.SchedulerException;
-import org.quartz.Trigger;
-
-import com.vip.saturn.job.basic.AbstractElasticJob;
-
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author chembo.huang
@@ -21,7 +20,7 @@ public class SaturnScheduler {
 
 	private static final String SATURN_QUARTZ_WORKER = "-saturnQuartz-worker";
 	private final AbstractElasticJob job;
-	
+
 	private Trigger trigger;
 	private final ExecutorService executor;
 	private SaturnWorker saturnQuartzWorker;
@@ -33,7 +32,8 @@ public class SaturnScheduler {
 
 			@Override
 			public Thread newThread(Runnable r) {
-				Thread t = new Thread(r, job.getExecutorName()+"_"+job.getConfigService().getJobName() + SATURN_QUARTZ_WORKER);
+				Thread t = new Thread(r,
+						job.getExecutorName() + "_" + job.getConfigService().getJobName() + SATURN_QUARTZ_WORKER);
 				if (t.isDaemon()) {
 					t.setDaemon(false);
 				}
@@ -50,7 +50,6 @@ public class SaturnScheduler {
 		executor.submit(saturnQuartzWorker);
 	}
 
-
 	public Trigger getTrigger() {
 		return trigger;
 	}
@@ -58,6 +57,11 @@ public class SaturnScheduler {
 	public void shutdown() {
 		saturnQuartzWorker.halt();
 		executor.shutdown();
+		try {
+			executor.awaitTermination(500, TimeUnit.MICROSECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
 	}
 
 	public void triggerJob() {

@@ -3,22 +3,22 @@ package com.vip.saturn.job.console.mybatis.service;
 
 import com.vip.saturn.job.console.mybatis.entity.SaturnStatistics;
 
-public interface SaturnStatisticsService{
-	
-	public int create(SaturnStatistics SaturnStatistics);
-	
-	public int createSelective(SaturnStatistics SaturnStatistics);
-	
-	public SaturnStatistics findByPrimaryKey(Integer id);
-	
-	public int updateByPrimaryKey(SaturnStatistics SaturnStatistics);
-	
-	public int updateByPrimaryKeySelective(SaturnStatistics SaturnStatistics);
-	
-	public int deleteByPrimaryKey(Integer id);
-	
-	SaturnStatistics findStatisticsByNameAndZkList(String name, String zklist );
-	
-	public int selectCount(SaturnStatistics SaturnStatistics);
-	
+public interface SaturnStatisticsService {
+
+	int create(SaturnStatistics SaturnStatistics);
+
+	int createSelective(SaturnStatistics SaturnStatistics);
+
+	SaturnStatistics findByPrimaryKey(Integer id);
+
+	int updateByPrimaryKey(SaturnStatistics SaturnStatistics);
+
+	int updateByPrimaryKeySelective(SaturnStatistics SaturnStatistics);
+
+	int deleteByPrimaryKey(Integer id);
+
+	SaturnStatistics findStatisticsByNameAndZkList(String name, String zkConnectionString);
+
+	int selectCount(SaturnStatistics SaturnStatistics);
+
 }

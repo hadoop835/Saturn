@@ -29,8 +29,8 @@ import com.vip.saturn.job.plugin.utils.CommonUtils;
 public class SaturnJobZipMojo extends AbstractMojo {
 
 	@Component
-    private MavenProjectHelper projectHelper;
-	
+	private MavenProjectHelper projectHelper;
+
 	@SuppressWarnings({ "unchecked" })
 	@Override
 	public void execute() throws MojoExecutionException, MojoFailureException {
@@ -42,16 +42,15 @@ public class SaturnJobZipMojo extends AbstractMojo {
 
 		MavenProject project = (MavenProject) getPluginContext().get("project");
 		String version = getSaturnVersion(project);
-		log.info("Packing the saturn job into a zip file: version:"+version);
+		log.info("Packing the saturn job into a zip file: version:" + version);
 
 		List<File> runtimeLibFiles = new ArrayList<File>();
 		List<Artifact> runtimeArtifacts = project.getRuntimeArtifacts();
 		for (Artifact artifact : runtimeArtifacts) {
 			runtimeLibFiles.add(artifact.getFile());
 		}
-		// Maybe could be more cool.
 		runtimeLibFiles.add(new File(project.getBuild().getDirectory(),
-				project.getArtifactId() + "-" + project.getVersion() + ".jar"));
+				project.getBuild().getFinalName() + "." + project.getPackaging()));
 
 		File zipFile = new File(project.getBuild().getDirectory(),
 				project.getArtifactId() + "-" + project.getVersion() + "-" + "app.zip");
@@ -61,12 +60,10 @@ public class SaturnJobZipMojo extends AbstractMojo {
 			e.printStackTrace();
 			throw new MojoExecutionException("zip " + zipFile + " failed", e);
 		}
-		
+
 		projectHelper.attachArtifact(project, "zip", "executor", zipFile);
 
 	}
-
-
 
 	@SuppressWarnings("unchecked")
 	private String getSaturnVersion(MavenProject project) throws MojoExecutionException {

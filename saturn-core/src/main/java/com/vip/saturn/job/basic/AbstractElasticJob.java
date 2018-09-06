@@ -3,9 +3,9 @@
  * <p>
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
@@ -14,31 +14,27 @@
 
 package com.vip.saturn.job.basic;
 
-import java.util.Date;
-import java.util.concurrent.ExecutorService;
-
-import org.apache.curator.framework.CuratorFramework;
-import org.apache.zookeeper.data.Stat;
-import org.quartz.JobExecutionException;
-import org.quartz.SchedulerException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.vip.saturn.job.executor.SaturnExecutorService;
 import com.vip.saturn.job.internal.config.ConfigurationService;
-import com.vip.saturn.job.internal.config.JobConfiguration;
 import com.vip.saturn.job.internal.control.ReportService;
 import com.vip.saturn.job.internal.execution.ExecutionContextService;
 import com.vip.saturn.job.internal.execution.ExecutionNode;
 import com.vip.saturn.job.internal.execution.ExecutionService;
 import com.vip.saturn.job.internal.failover.FailoverService;
-import com.vip.saturn.job.internal.offset.OffsetService;
 import com.vip.saturn.job.internal.server.ServerService;
-import com.vip.saturn.job.internal.server.ServerStatus;
 import com.vip.saturn.job.internal.sharding.ShardingService;
 import com.vip.saturn.job.internal.storage.JobNodePath;
 import com.vip.saturn.job.trigger.SaturnScheduler;
 import com.vip.saturn.job.trigger.SaturnTrigger;
+import org.apache.curator.framework.CuratorFramework;
+import org.apache.zookeeper.data.Stat;
+import org.quartz.SchedulerException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.Date;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
 
 /**
  * 弹性化分布式作业的基类.
@@ -63,8 +59,6 @@ public abstract class AbstractElasticJob implements Stopable {
 
 	protected FailoverService failoverService;
 
-	protected OffsetService offsetService;
-
 	protected ServerService serverService;
 
 	protected String executorName;
@@ -78,9 +72,10 @@ public abstract class AbstractElasticJob implements Stopable {
 	protected JobScheduler jobScheduler;
 
 	protected SaturnExecutorService saturnExecutorService;
-	
+
 	protected ReportService reportService;
-	
+
+	protected String jobVersion;
 
 	/**
 	 * vms job这个状态无效。
@@ -96,11 +91,11 @@ public abstract class AbstractElasticJob implements Stopable {
 
 	@Override
 	public void shutdown() {
-		if(scheduler != null) {
+		if (scheduler != null) {
 			scheduler.shutdown();
 		}
 	}
-	
+
 	public ExecutorService getExecutorService() {
 		return jobScheduler.getExecutorService();
 	}
@@ -111,7 +106,7 @@ public abstract class AbstractElasticJob implements Stopable {
 	}
 
 	public final void execute() {
-		log.trace("Quartz run-job entrance, job execution context:{}.");
+		log.trace("Saturn start to execute job [{}].", jobName);
 		// 对每一个jobScheduler，作业对象只有一份，多次使用，所以每次开始执行前先要reset
 		reset();
 
@@ -122,7 +117,7 @@ public abstract class AbstractElasticJob implements Stopable {
 
 		JobExecutionMultipleShardingContext shardingContext = null;
 		try {
-			if (failoverService.getLocalHostFailoverItems().isEmpty()) {
+			if (!configService.isEnabledReport() || failoverService.getLocalHostFailoverItems().isEmpty()) {
 				shardingService.shardingIfNecessary();
 			}
 
@@ -144,53 +139,45 @@ public abstract class AbstractElasticJob implements Stopable {
 
 			if (configService.isInPausePeriod()) {
 				log.info("the job {} current running time is in pausePeriod, do nothing about business.", jobName);
-				//executionService.updateNextFireTime(shardingContext.getShardingItems());
 				return;
 			}
+
 			executeJobInternal(shardingContext);
 
-			if (isFailoverSupported() && configService.isFailover() && !stopped && !forceStopped && !aborted) {// NOSONAR
+			if (isFailoverSupported() && configService.isFailover() && !stopped && !forceStopped && !aborted) {
 				failoverService.failoverIfNecessary();
 			}
 
-			log.trace("Elastic job: execute normal completed, sharding context:{}.", shardingContext);
+			log.trace("Saturn finish to execute job [{}], sharding context:{}.", jobName, shardingContext);
 		} catch (Exception e) {
-			log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, jobName, e.getMessage()), e);
+			log.warn(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName, e.getMessage()), e);
 		} finally {
 			running = false;
 		}
 	}
 
-	private void executeJobInternal(final JobExecutionMultipleShardingContext shardingContext)
-			throws JobExecutionException {
-		
+	private void executeJobInternal(final JobExecutionMultipleShardingContext shardingContext) throws Exception {
+
 		executionService.registerJobBegin(shardingContext);
 
 		try {
 			executeJob(shardingContext);
 		} finally {
-			boolean updateServerStatus = false;
-			Date nextFireTimePausePeriodEffected = jobScheduler.getNextFireTimePausePeriodEffected();
-			for (int item : shardingContext.getShardingItems()) {
-				if (!checkIfZkLostAfterExecution(item)) {
-					continue;// NOSONAR
-				}
-				if (!aborted) {
-					if (!updateServerStatus) {
-						JobConfiguration jobConfiguration = getJobScheduler().getCurrentConf();
-						if (jobConfiguration.isEnabledReport() == null) {
-							if ("JAVA_JOB".equals(jobConfiguration.getJobType()) || "SHELL_JOB".equals(jobConfiguration.getJobType())) {
-								serverService.updateServerStatus(ServerStatus.READY);// server状态只需更新一次
-							}
-						} else if (jobConfiguration.isEnabledReport()) {
-							serverService.updateServerStatus(ServerStatus.READY);// server状态只需更新一次
-						}
-						updateServerStatus = true;
+			List<Integer> shardingItems = shardingContext.getShardingItems();
+			if (!shardingItems.isEmpty()) {
+				Date nextFireTimePausePeriodEffected = jobScheduler.getNextFireTimePausePeriodEffected();
+				boolean isEnabledReport = configService.isEnabledReport();
+				for (int item : shardingItems) {
+					if (isEnabledReport && !checkIfZkLostAfterExecution(item)) {
+						continue;
 					}
-					executionService.registerJobCompletedByItem(shardingContext, item, nextFireTimePausePeriodEffected);
-				}
-				if (isFailoverSupported() && configService.isFailover()) {
-					failoverService.updateFailoverComplete(item);
+					if (!aborted) {
+						executionService
+								.registerJobCompletedByItem(shardingContext, item, nextFireTimePausePeriodEffected);
+					}
+					if (isFailoverSupported() && configService.isFailover()) {
+						failoverService.updateFailoverComplete(item);
+					}
 				}
 			}
 			afterMainThreadDone(shardingContext);
@@ -206,34 +193,81 @@ public abstract class AbstractElasticJob implements Stopable {
 		CuratorFramework curatorFramework = (CuratorFramework) executionService.getCoordinatorRegistryCenter().getRawClient();
 		try {
 			String runningPath = JobNodePath.getNodeFullPath(jobName, ExecutionNode.getRunningNode(item));
-            Stat itemStat = curatorFramework.checkExists().forPath(runningPath);
-            long sessionId = curatorFramework.getZookeeperClient().getZooKeeper().getSessionId();
-
+			Stat itemStat = curatorFramework.checkExists().forPath(runningPath);
+			long sessionId = curatorFramework.getZookeeperClient().getZooKeeper().getSessionId();
+			// 有itemStat的情况
 			if (itemStat != null) {
-                long ephemeralOwner = itemStat.getEphemeralOwner();
-                if (ephemeralOwner != sessionId) {
-					log.info("[{}] msg=item={} 's running node doesn't belong to current zk, node sessionid is {}, current zk sessionid is {}", jobName, item, ephemeralOwner, sessionId);
+				long ephemeralOwner = itemStat.getEphemeralOwner();
+				if (ephemeralOwner != sessionId) {
+					log.info("[{}] msg=item={} 's running node doesn't belong to current zk, node sessionid is {}, current zk sessionid is {}",
+							jobName, item, ephemeralOwner, sessionId);
 					return false;
-				}
-			} else {
-				JobConfiguration currentConf = jobScheduler.getCurrentConf();
-                Boolean enabledReport = currentConf.isEnabledReport();
-                String jobType = currentConf.getJobType();
-                // 没有配enabledReport，java/shell作业默认为开启；
-				if ((enabledReport == null && ("JAVA_JOB".equals(jobType) || "SHELL_JOB".equals(jobType)))
-						|| (enabledReport != null && enabledReport)) {
-					// 如果itemStat是空，要么是已经failover完了，要么是没有节点failover；两种情况都返回false;
-					log.info("[{}] msg=item={} 's running node is not exists, zk sessionid={} ", jobName, item, sessionId);
-					return false;
+				} else {
+					return true;
 				}
 			}
-			return true;
-		} catch (Exception e) {
-			log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, jobName, e.getMessage()), e);
+			// 如果itemStat是空，要么是已经failover完了，要么是没有节点failover；两种情况都返回false
+			log.info("[{}] msg=item={} 's running node is not exists, zk sessionid={} ", jobName, item, sessionId);
+			return false;
+		} catch (Throwable e) {
+			log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName, e.getMessage()), e);
 			return false;
 		}
 	}
-	
+
+	protected abstract void executeJob(final JobExecutionMultipleShardingContext shardingContext);
+
+	/**
+	 * 当涉及到主线程开子线程异步执行时，在主线程完成后提供的回调
+	 */
+	public void afterMainThreadDone(final JobExecutionMultipleShardingContext shardingContext) {
+	}
+
+	public void callbackWhenShardingItemIsEmpty(final JobExecutionMultipleShardingContext shardingContext) {
+	}
+
+	public abstract boolean isFailoverSupported();
+
+	@Override
+	public void stop() {
+		stopped = true;
+	}
+
+	@Override
+	public void forceStop() {
+		forceStopped = true;
+	}
+
+	@Override
+	public void abort() {
+		aborted = true;
+	}
+
+	@Override
+	public void resume() {
+		stopped = false;
+	}
+
+	public abstract SaturnTrigger getTrigger();
+
+	public abstract void enableJob();
+
+	public abstract void disableJob();
+
+	public abstract void onResharding();
+
+	public abstract void onForceStop(int item);
+
+	public abstract void onTimeout(int item);
+
+	public abstract void onNeedRaiseAlarm(int item, String alarmMessage);
+
+	public void notifyJobEnabled() {
+	}
+
+	public void notifyJobDisabled() {
+	}
+
 	/**
 	 * 设置shardingService
 	 * @param shardingService
@@ -254,14 +288,10 @@ public abstract class AbstractElasticJob implements Stopable {
 		this.failoverService = failoverService;
 	}
 
-	protected void setOffsetService(OffsetService offsetService) {
-		this.offsetService = offsetService;
-	}
-
 	protected void setServerService(ServerService serverService) {
 		this.serverService = serverService;
 	}
-	
+
 	protected void setReportService(ReportService reportService) {
 		this.reportService = reportService;
 	}
@@ -350,53 +380,16 @@ public abstract class AbstractElasticJob implements Stopable {
 		return configService;
 	}
 
-	protected abstract void executeJob(final JobExecutionMultipleShardingContext shardingContext);
-
-	/**
-	 * 当涉及到主线程开子线程异步执行时，在主线程完成后提供的回调
-	 */
-	public void afterMainThreadDone(final JobExecutionMultipleShardingContext shardingContext) {
-	}
-
-	public void callbackWhenShardingItemIsEmpty(final JobExecutionMultipleShardingContext shardingContext) {
-	}
-
-	public abstract boolean isFailoverSupported();
-
-	@Override
-	public void stop() {
-		stopped = true;
-	}
-
-	@Override
-	public void forceStop() {
-		forceStopped = true;
-	}
-
-	@Override
-	public void abort() {
-		aborted = true;
-	}
-
-	@Override
-	public void resume() {
-		stopped = false;
-	}
-
 	public final void setConfigService(final ConfigurationService configService) {
 		this.configService = configService;
 	}
 
-	public abstract SaturnTrigger getTrigger();
+	public String getJobVersion() {
+		return jobVersion;
+	}
 
-	public abstract void enableJob();
-
-	public abstract void disableJob();
-
-	public abstract void onResharding();
-
-	public abstract void onForceStop(int item);
-
-	public abstract void onTimeout(int item);
+	public void setJobVersion(String jobVersion) {
+		this.jobVersion = jobVersion;
+	}
 
 }

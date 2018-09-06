@@ -1,18 +1,16 @@
 package com.vip.saturn.job.basic;
 
-import java.lang.Thread.UncaughtExceptionHandler;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.ScheduledFuture;
-
+import com.vip.saturn.job.SaturnJobReturn;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.vip.saturn.job.SaturnJobReturn;
+import java.lang.Thread.UncaughtExceptionHandler;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledFuture;
 
 /**
- * 
+ *
  * @author xiaopeng.he
  *
  */
@@ -27,17 +25,7 @@ public class ShardingItemFutureTask implements Callable<SaturnJobReturn> {
 
 	private Future<?> callFuture;
 
-	private boolean done = false; //NOSONAR
-	
-	private ExecutorService executorService;
-		
-	public ExecutorService getExecutorService() {
-		return executorService;
-	}
-
-	public void setExecutorService(ExecutorService executorService) {
-		this.executorService = executorService;
-	}
+	private boolean done = false;
 
 	public Future<?> getCallFuture() {
 		return callFuture;
@@ -79,29 +67,30 @@ public class ShardingItemFutureTask implements Callable<SaturnJobReturn> {
 
 	@Override
 	public SaturnJobReturn call() throws Exception {
-		Thread.currentThread().setUncaughtExceptionHandler(new UncaughtExceptionHandler(){
+		Thread.currentThread().setUncaughtExceptionHandler(new UncaughtExceptionHandler() {
 
 			@Override
 			public void uncaughtException(Thread t, Throwable e) {
-				if(e instanceof IllegalMonitorStateException || e instanceof ThreadDeath){		
-					log.error("uncaught:"+e.getMessage());
-					
-					if(callFuture != null){
+				if (e instanceof IllegalMonitorStateException || e instanceof ThreadDeath) {
+					log.warn(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, callable.getJobName(),
+							"business thread pool maybe crashed"), e);
+					if (callFuture != null) {
 						callFuture.cancel(false);
 					}
-					
-					if(executorService != null){
-						executorService.shutdown();
-					}
+					log.warn(SaturnConstant.LOG_FORMAT, callable.getJobName(),
+							"close the old business thread pool, and re-create new one");
+					callable.getSaturnJob().getJobScheduler().reCreateExecutorService();
 				}
 			}
-			
+
 		});
 		try {
 			SaturnJobReturn ret = callable.call();
 			return ret;
 		} finally {
 			done();
+			log.debug("job:[{}] item:[{}] finish execution, which takes {}ms", callable.getJobName(),
+					callable.getItem(), callable.getExecutionTime());
 		}
 	}
 
@@ -121,7 +110,8 @@ public class ShardingItemFutureTask implements Callable<SaturnJobReturn> {
 					callable.onTimeout();
 				}
 			} catch (Throwable t) {
-				log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, callable.getJobName(), t.getMessage()), t);
+				log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, callable.getJobName(), t.getMessage()),
+						t);
 			}
 
 			try {
@@ -129,7 +119,8 @@ public class ShardingItemFutureTask implements Callable<SaturnJobReturn> {
 					callable.postForceStop();
 				}
 			} catch (Throwable t) {
-				log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, callable.getJobName(), t.getMessage()), t);
+				log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, callable.getJobName(), t.getMessage()),
+						t);
 			}
 
 			callable.checkAndSetSaturnJobReturn();
@@ -142,7 +133,8 @@ public class ShardingItemFutureTask implements Callable<SaturnJobReturn> {
 					doneFinallyCallback.call();
 				}
 			} catch (Exception e) {
-				log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, callable.getJobName(), e.getMessage()), e);
+				log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, callable.getJobName(), e.getMessage()),
+						e);
 			}
 		}
 	}
@@ -152,18 +144,38 @@ public class ShardingItemFutureTask implements Callable<SaturnJobReturn> {
 		Thread businessThread = shardingItemCallable.getCurrentThread();
 		if (businessThread != null) {
 			try {
-
-				while (!shardingItemCallable.isBreakForceStop() && !shardingItemFutureTask.isDone()) {
-					businessThread.stop();
-					if (!shardingItemCallable.isBreakForceStop() && !shardingItemFutureTask.isDone()) {
-						Thread.sleep(50);
-					} else {
-						break;
+				// interrupt thread one time, wait business thread to break, wait 2000ms at most
+				if (!isBusinessBreak(shardingItemFutureTask, shardingItemCallable)) {
+					log.info("try to interrupt business thread");
+					businessThread.interrupt();
+					for (int i = 0; i < 20; i++) {
+						if (isBusinessBreak(shardingItemFutureTask, shardingItemCallable)) {
+							log.info("interrupt business thread done");
+							return;
+						}
+						Thread.sleep(100L);
 					}
 				}
-				
+				// stop thread
+				while (!isBusinessBreak(shardingItemFutureTask, shardingItemCallable)) {
+					log.info("try to force stop business thread");
+					businessThread.stop();
+					if (isBusinessBreak(shardingItemFutureTask, shardingItemCallable)) {
+						log.info("force stop business thread done");
+						return;
+					}
+					Thread.sleep(50L);
+				}
+				log.info("kill business thread done");
 			} catch (InterruptedException e) {// NOSONAR
 			}
+		} else {
+			log.warn("business thread is null while killing it");
 		}
+	}
+
+	private static boolean isBusinessBreak(ShardingItemFutureTask shardingItemFutureTask,
+			JavaShardingItemCallable shardingItemCallable) {
+		return shardingItemCallable.isBreakForceStop() || shardingItemFutureTask.isDone();
 	}
 }

@@ -16,7 +16,7 @@ import com.fasterxml.jackson.annotation.JsonInclude.Include;
 public class TreeNode {
 
 	private String title;
-	
+
 	@JsonInclude(Include.NON_EMPTY)
 	private String domain;
 
@@ -25,16 +25,15 @@ public class TreeNode {
 
 	@JsonInclude(Include.NON_EMPTY)
 	private String icon;
-	
+
 	@JsonInclude(Include.NON_EMPTY)
 	private boolean lazy;
-	
+
 	@JsonInclude(Include.NON_EMPTY)
 	private String extraClasses;
-	
-	
+
 	private boolean folder = true;
-	
+
 	private int bid;
 
 	@JsonInclude(Include.NON_EMPTY)
@@ -123,5 +122,25 @@ public class TreeNode {
 		return "TreeNode(title=" + getTitle() + ", domain=" + getDomain() + ", fullPath=" + getFullPath() + ", icon="
 				+ getIcon() + ", lazy=" + isLazy() + ", extraClasses=" + getExtraClasses() + ", folder=" + isFolder()
 				+ ", bid=" + getBid() + ", children=" + getChildren() + ")";
+	}
+
+	public TreeNode deepCopy() {
+		TreeNode result = new TreeNode();
+		result.setBid(bid);
+		result.setDomain(domain);
+		result.setExtraClasses(extraClasses);
+		result.setFolder(folder);
+		result.setFullPath(fullPath);
+		result.setIcon(icon);
+		result.setLazy(lazy);
+		result.setTitle(title);
+		List<TreeNode> childs = new ArrayList<TreeNode>();
+		TreeNode child = null;
+		for (TreeNode thisChild : this.getChildren()) {
+			child = thisChild.deepCopy();
+			childs.add(child);
+		}
+		result.setChildren(childs);
+		return result;
 	}
 }

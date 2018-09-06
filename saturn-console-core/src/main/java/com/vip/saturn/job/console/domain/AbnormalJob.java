@@ -3,46 +3,77 @@
  */
 package com.vip.saturn.job.console.domain;
 
-
 /**
  * @author chembo.huang
  *
  */
 public class AbnormalJob {
-	
+
 	private static final long serialVersionUID = 1L;
-	
-	private final String jobName;
-	
-	private final String domainName;
-	
+
+	private String uuid;
+
+	private String jobName;
+
+	private String domainName;
+
 	/** name and namespace */
-	private final String nns;
-	
+	private String nns;
+
 	/** degree of the domain */
-	private final String degree;
-	
+	private String degree;
+
 	private String jobDegree;
 
 	private String timeZone;
-	
+
 	private long nextFireTime;
 
 	private String nextFireTimeWithTimeZoneFormat;
-	
+
 	private String cause;
-	
-	private transient long nextFireTimeAfterEnabledMtime;
-	
-	public AbnormalJob(String jobName, String domainName, String nns, String degree){
+
+	private boolean read = false;
+
+	private transient long nextFireTimeAfterEnabledMtimeOrLastCompleteTime;
+
+	public AbnormalJob() {
+
+	}
+
+	public AbnormalJob(String jobName, String domainName, String nns, String degree) {
 		this.jobName = jobName;
 		this.domainName = domainName;
 		this.nns = nns;
 		this.degree = degree;
 	}
-	
+
 	public enum Cause {
 		NO_SHARDS, NOT_RUN, EXECUTORS_NOT_READY
+	}
+
+	public String getUuid() {
+		return uuid;
+	}
+
+	public void setUuid(String uuid) {
+		this.uuid = uuid;
+	}
+
+	public void setJobName(String jobName) {
+		this.jobName = jobName;
+	}
+
+	public void setDomainName(String domainName) {
+		this.domainName = domainName;
+	}
+
+	public void setNns(String nns) {
+		this.nns = nns;
+	}
+
+	public void setDegree(String degree) {
+		this.degree = degree;
 	}
 
 	public String getJobDegree() {
@@ -101,26 +132,44 @@ public class AbnormalJob {
 		return degree;
 	}
 
-	public long getNextFireTimeAfterEnabledMtime() {
-		return nextFireTimeAfterEnabledMtime;
+	public long getNextFireTimeAfterEnabledMtimeOrLastCompleteTime() {
+		return nextFireTimeAfterEnabledMtimeOrLastCompleteTime;
 	}
 
-	public void setNextFireTimeAfterEnabledMtime(long nextFireTimeAfterEnabledMtime) {
-		this.nextFireTimeAfterEnabledMtime = nextFireTimeAfterEnabledMtime;
+	public void setNextFireTimeAfterEnabledMtimeOrLastCompleteTime(
+			long nextFireTimeAfterEnabledMtimeOrLastCompleteTime) {
+		this.nextFireTimeAfterEnabledMtimeOrLastCompleteTime = nextFireTimeAfterEnabledMtimeOrLastCompleteTime;
+	}
+
+	public boolean isRead() {
+		return read;
+	}
+
+	public void setRead(boolean read) {
+		this.read = read;
 	}
 
 	@Override
-	public String toString() {
-		return "AbnormalJob{" +
-				"jobName='" + jobName + '\'' +
-				", domainName='" + domainName + '\'' +
-				", nns='" + nns + '\'' +
-				", degree='" + degree + '\'' +
-				", jobDegree='" + jobDegree + '\'' +
-				", timeZone='" + timeZone + '\'' +
-				", nextFireTime=" + nextFireTime +
-				", nextFireTimeWithTimeZoneFormat='" + nextFireTimeWithTimeZoneFormat + '\'' +
-				", cause='" + cause + '\'' +
-				'}';
+	public int hashCode() {
+		int result = jobName.hashCode();
+		result = 31 * result + domainName.hashCode();
+		result = 31 * result + cause.hashCode();
+		result = 31 * result + (int) (nextFireTimeAfterEnabledMtimeOrLastCompleteTime
+				^ (nextFireTimeAfterEnabledMtimeOrLastCompleteTime >>> 32));
+		return result;
 	}
+
+	@Override
+	public boolean equals(Object obj) {
+		if (this == obj)
+			return true;
+		if (obj == null)
+			return false;
+		if (getClass() != obj.getClass())
+			return false;
+		AbnormalJob other = (AbnormalJob) obj;
+		return this.getJobName().equals(other.getJobName()) && this.getDomainName().equals(other.getDomainName())
+				&& this.getCause().equals(other.getCause()) && this.getNextFireTime() == other.getNextFireTime();
+	}
+
 }

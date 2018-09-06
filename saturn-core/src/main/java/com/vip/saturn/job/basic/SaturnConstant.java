@@ -5,8 +5,10 @@ package com.vip.saturn.job.basic;
  */
 public class SaturnConstant {
 
-    public static final String ERROR_LOG_FORMAT = "[%s] msg=%s";
+	public static final String LOG_FORMAT = "[{}] msg={}";
 
-    public static final String TIME_ZONE_ID_DEFAULT = "Asia/Shanghai";
+	public static final String LOG_FORMAT_FOR_STRING = "[%s] msg=%s";
+
+	public static final String TIME_ZONE_ID_DEFAULT = "Asia/Shanghai";
 
 }

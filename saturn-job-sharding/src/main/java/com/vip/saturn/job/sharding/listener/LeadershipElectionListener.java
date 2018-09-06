@@ -6,24 +6,24 @@ import com.vip.saturn.job.sharding.node.SaturnExecutorsNode;
 import com.vip.saturn.job.sharding.service.NamespaceShardingService;
 
 /**
- * Created by xiaopeng.he on 2016/7/12.
+ * @author hebelala
  */
 public class LeadershipElectionListener extends AbstractTreeCacheListener {
 
-    private NamespaceShardingService namespaceShardingService;
+	private NamespaceShardingService namespaceShardingService;
 
-    public LeadershipElectionListener(NamespaceShardingService namespaceShardingService) {
-        this.namespaceShardingService = namespaceShardingService;
-    }
+	public LeadershipElectionListener(NamespaceShardingService namespaceShardingService) {
+		this.namespaceShardingService = namespaceShardingService;
+	}
 
-    @Override
-    public void childEvent(TreeCacheEvent.Type type, String path, String nodeData) throws Exception {
-        if(isLeaderRemove(type, path)) {
-            namespaceShardingService.leaderElection();
-        }
-    }
+	@Override
+	public void childEvent(TreeCacheEvent.Type type, String path, String nodeData) throws Exception {
+		if (isLeaderRemove(type, path)) {
+			namespaceShardingService.leaderElection();
+		}
+	}
 
-    private boolean isLeaderRemove(TreeCacheEvent.Type type, String path) {
-        return type == TreeCacheEvent.Type.NODE_REMOVED && SaturnExecutorsNode.LEADER_HOSTNODE_PATH.equals(path);
-    }
+	private boolean isLeaderRemove(TreeCacheEvent.Type type, String path) {
+		return type == TreeCacheEvent.Type.NODE_REMOVED && SaturnExecutorsNode.LEADER_HOSTNODE_PATH.equals(path);
+	}
 }

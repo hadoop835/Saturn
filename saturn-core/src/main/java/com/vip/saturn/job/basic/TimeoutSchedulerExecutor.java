@@ -1,24 +1,20 @@
-/**
- * 
- */
 package com.vip.saturn.job.basic;
+
+import com.vip.saturn.job.threads.SaturnThreadFactory;
+import org.jboss.netty.util.internal.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-import org.jboss.netty.util.internal.ConcurrentHashMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.vip.saturn.job.threads.SaturnThreadFactory;
-
 /**
  * @author chembo.huang
- *
  */
 public class TimeoutSchedulerExecutor {
-	static Logger log = LoggerFactory.getLogger(TimeoutSchedulerExecutor.class);
+
+	private static Logger log = LoggerFactory.getLogger(TimeoutSchedulerExecutor.class);
 
 	private static ConcurrentHashMap<String, ScheduledThreadPoolExecutor> scheduledThreadPoolExecutorMap = new ConcurrentHashMap<>();
 
@@ -69,20 +65,19 @@ public class TimeoutSchedulerExecutor {
 		@Override
 		public void run() {
 			try {
-				if (!shardingItemFutureTask.isDone()) {
-					if (shardingItemFutureTask.getCallable().setTimeout()) {
-						try {
-							shardingItemFutureTask.getCallable().beforeTimeout();
-							ShardingItemFutureTask.killRunningBusinessThread(shardingItemFutureTask);
-						} catch (Throwable t) {// NOSONAR
-						}
-					}
+				JavaShardingItemCallable javaShardingItemCallable = shardingItemFutureTask.getCallable();
+				if (!shardingItemFutureTask.isDone() && javaShardingItemCallable.setTimeout()) {
+					String jobName = javaShardingItemCallable.getJobName();
+					Integer item = javaShardingItemCallable.getItem();
+					log.info("[{}] msg=Force stop timeout job, jobName:{}, item:{}", jobName, jobName, item);
+					// 调用beforeTimeout函数
+					javaShardingItemCallable.beforeTimeout();
+					// 强杀
+					ShardingItemFutureTask.killRunningBusinessThread(shardingItemFutureTask);
 				}
-			} catch (Throwable e) {
-				log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT,
-						shardingItemFutureTask.getCallable().getJobName(), e.getMessage()), e);
+			} catch (Throwable t) {
+				log.warn("Failed to force stop timeout job", t);
 			}
-
 		}
 
 	}

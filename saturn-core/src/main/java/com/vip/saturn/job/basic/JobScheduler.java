@@ -3,9 +3,9 @@
  * <p>
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
@@ -13,18 +13,6 @@
  */
 
 package com.vip.saturn.job.basic;
-
-import java.util.Date;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
-
-import org.apache.curator.framework.CuratorFramework;
-import org.quartz.SchedulerException;
-import org.quartz.Trigger;
-import org.quartz.spi.OperableTrigger;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.vip.saturn.job.exception.JobException;
 import com.vip.saturn.job.executor.LimitMaxJobsService;
@@ -38,7 +26,6 @@ import com.vip.saturn.job.internal.execution.ExecutionContextService;
 import com.vip.saturn.job.internal.execution.ExecutionService;
 import com.vip.saturn.job.internal.failover.FailoverService;
 import com.vip.saturn.job.internal.listener.ListenerManager;
-import com.vip.saturn.job.internal.offset.OffsetService;
 import com.vip.saturn.job.internal.server.ServerService;
 import com.vip.saturn.job.internal.sharding.ShardingService;
 import com.vip.saturn.job.internal.statistics.StatisticsService;
@@ -49,6 +36,18 @@ import com.vip.saturn.job.threads.ExtendableThreadPoolExecutor;
 import com.vip.saturn.job.threads.SaturnThreadFactory;
 import com.vip.saturn.job.threads.TaskQueue;
 import com.vip.saturn.job.trigger.SaturnScheduler;
+import org.apache.curator.framework.CuratorFramework;
+import org.quartz.SchedulerException;
+import org.quartz.Trigger;
+import org.quartz.spi.OperableTrigger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.Date;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 作业调度器.
@@ -76,7 +75,7 @@ public class JobScheduler {
 	private final LeaderElectionService leaderElectionService;
 
 	private final ServerService serverService;
-	
+
 	private final ReportService reportService;
 
 	private final ShardingService shardingService;
@@ -89,21 +88,21 @@ public class JobScheduler {
 
 	private final StatisticsService statisticsService;
 
-	private final OffsetService offsetService;
-
 	private final AnalyseService analyseService;
 
 	private final LimitMaxJobsService limitMaxJobsService;
 
 	private final JobNodeStorage jobNodeStorage;
-	
+
 	private final ZkCacheManager zkCacheManager;
-	
+
 	private ExecutorService executorService;
 
 	private AbstractElasticJob job;
 
 	private SaturnExecutorService saturnExecutorService;
+
+	private AtomicBoolean isShutdownFlag = new AtomicBoolean(false);
 
 	public JobScheduler(final CoordinatorRegistryCenter coordinatorRegistryCenter,
 			final JobConfiguration jobConfiguration) {
@@ -114,8 +113,9 @@ public class JobScheduler {
 		this.jobNodeStorage = new JobNodeStorage(coordinatorRegistryCenter, jobConfiguration);
 		initExecutorService();
 		JobRegistry.addJobScheduler(executorName, jobName, this);
-		
-		zkCacheManager = new ZkCacheManager((CuratorFramework) coordinatorRegistryCenter.getRawClient(), jobName, executorName);
+
+		zkCacheManager = new ZkCacheManager((CuratorFramework) coordinatorRegistryCenter.getRawClient(), jobName,
+				executorName);
 		configService = new ConfigurationService(this);
 		leaderElectionService = new LeaderElectionService(this);
 		serverService = new ServerService(this);
@@ -124,7 +124,6 @@ public class JobScheduler {
 		executionService = new ExecutionService(this);
 		failoverService = new FailoverService(this);
 		statisticsService = new StatisticsService(this);
-		offsetService = new OffsetService(this);
 		analyseService = new AnalyseService(this);
 		limitMaxJobsService = new LimitMaxJobsService(this);
 		listenerManager = new ListenerManager(this);
@@ -140,19 +139,23 @@ public class JobScheduler {
 
 	/**
 	 * 初始化作业.
+	 * @return true初始化成功，false初始化失败
 	 */
-	public void init() {
+	public boolean init() {
 		try {
 			String currentConfJobName = currentConf.getJobName();
 			log.info("[{}] msg=Elastic job: job controller init, job name is: {}.", jobName, currentConfJobName);
-			// coordinatorRegistryCenter.addCacheData(JobNodePath.getJobNameFullPath(currentConfJobName));
 
 			startAll();
 			createJob();
-			serverService.persistServerOnline();
+			serverService.persistServerOnline(job);
+			// Notify job enabled or disabled after that all are ready, include job was initialized.
+			configService.notifyJobEnabledOrNot();
+			return true;
 		} catch (Throwable t) {
-			log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, jobName, t.getMessage()), t);
+			log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName, t.getMessage()), t);
 			shutdown(false);
+			return false;
 		}
 	}
 
@@ -165,7 +168,6 @@ public class JobScheduler {
 		executionService.start();
 		failoverService.start();
 		statisticsService.start();
-		offsetService.start();
 		limitMaxJobsService.start();
 		analyseService.start();
 
@@ -184,7 +186,7 @@ public class JobScheduler {
 		try {
 			job = (AbstractElasticJob) jobClass.newInstance();
 		} catch (Exception e) {
-			log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, jobName, "createJobException:"), e);
+			log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName, "createJobException:"), e);
 			throw new RuntimeException("can not create job with job type " + currentConf.getJobType());
 		}
 		job.setJobScheduler(this);
@@ -193,7 +195,6 @@ public class JobScheduler {
 		job.setExecutionContextService(executionContextService);
 		job.setExecutionService(executionService);
 		job.setFailoverService(failoverService);
-		job.setOffsetService(offsetService);
 		job.setServerService(serverService);
 		job.setExecutorName(executorName);
 		job.setReportService(reportService);
@@ -202,39 +203,56 @@ public class JobScheduler {
 		job.setSaturnExecutorService(saturnExecutorService);
 		job.init();
 	}
-	
+
 	private void initExecutorService() {
 		ThreadFactory factory = new SaturnThreadFactory(jobName);
 		executorService = new ExtendableThreadPoolExecutor(0, 100, 2, TimeUnit.MINUTES, new TaskQueue(), factory);
 	}
 
+	public void reCreateExecutorService() {
+		synchronized (isShutdownFlag) {
+			if (isShutdownFlag.get()) {
+				log.warn(SaturnConstant.LOG_FORMAT, jobName,
+						"the jobScheduler was shutdown, cannot re-create business thread pool");
+				return;
+			}
+			executionService.shutdown();
+			initExecutorService();
+		}
+	}
+
 	/**
 	 * 获取下次作业触发时间.可能被暂停时间段所影响。
-	 * 
+	 *
 	 * @return 下次作业触发时间
 	 */
 	public Date getNextFireTimePausePeriodEffected() {
-		SaturnScheduler saturnScheduler =  job.getScheduler();
-		if(saturnScheduler == null){
-			return null;
-		}
-		Trigger trigger = saturnScheduler.getTrigger();
+		try {
+			SaturnScheduler saturnScheduler = job.getScheduler();
+			if (saturnScheduler == null) {
+				return null;
+			}
+			Trigger trigger = saturnScheduler.getTrigger();
 
-		if (trigger == null) {
-			return null;
-		}
+			if (trigger == null) {
+				return null;
+			}
 
-		((OperableTrigger) trigger).updateAfterMisfire(null);
-		Date nextFireTime = trigger.getNextFireTime();
-		while (nextFireTime != null && configService.isInPausePeriod(nextFireTime)) {
-			nextFireTime = trigger.getFireTimeAfter(nextFireTime);
-		}
-		if (null == nextFireTime) {
+			((OperableTrigger) trigger).updateAfterMisfire(null);
+			Date nextFireTime = trigger.getNextFireTime();
+			while (nextFireTime != null && configService.isInPausePeriod(nextFireTime)) {
+				nextFireTime = trigger.getFireTimeAfter(nextFireTime);
+			}
+			if (null == nextFireTime) {
+				return null;
+			}
+			return nextFireTime;
+		} catch (Throwable t) {
+			log.error("fail to get next fire time", t);
 			return null;
 		}
-		return nextFireTime;
 	}
-	
+
 	/**
 	 * 停止作业.
 	 * @param stopJob 是否强制停止作业
@@ -246,18 +264,6 @@ public class JobScheduler {
 			job.stop();
 		}
 	}
-
-	/**
-	 * 恢复因服务器崩溃而停止的作业.
-	 * 
-	 * <p>
-	 * 不会恢复手工设置停止运行的作业.
-	 * </p>
-	 */
-	/*
-	 * public void resumeCrashedJob() { serverService.persistServerOnline();
-	 * executionService.clearRunningInfo(shardingService.getLocalHostShardingItems()); job.resume(); }
-	 */
 
 	/**
 	 * 立刻启动作业.
@@ -272,55 +278,58 @@ public class JobScheduler {
 	/**
 	 * 关闭process count thread
 	 */
-	public void shutdownCountThread(){
+	public void shutdownCountThread() {
 		statisticsService.shutdown();
 	}
-	
+
 	/**
 	 * 关闭调度器.
 	 */
 	public void shutdown(boolean removejob) {
-		try {
-			if (job != null) {
-				job.shutdown();
-				Thread.sleep(500);
+		synchronized (isShutdownFlag) {
+			isShutdownFlag.set(true);
+			try {
+				if (job != null) {
+					job.shutdown();
+				}
+			} catch (final Exception e) {
+				log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName, e.getMessage()), e);
 			}
-		} catch (final Exception e) {
-			log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, jobName, e.getMessage()), e);
-		}
 
-		listenerManager.shutdown();
-		shardingService.shutdown();
-		configService.shutdown();
-		leaderElectionService.shutdown();
-		serverService.shutdown();
-		executionContextService.shutdown();
-		executionService.shutdown();
-		failoverService.shutdown();
-		statisticsService.shutdown();
-		offsetService.shutdown();
-		analyseService.shutdown();
-		limitMaxJobsService.shutdown();
+			listenerManager.shutdown();
+			shardingService.shutdown();
+			configService.shutdown();
+			leaderElectionService.shutdown();
+			serverService.shutdown();
+			executionContextService.shutdown();
+			executionService.shutdown();
+			failoverService.shutdown();
+			statisticsService.shutdown();
+			analyseService.shutdown();
+			limitMaxJobsService.shutdown();
 
-		zkCacheManager.shutdown();
-		try {
-			Thread.sleep(500);
-		} catch (InterruptedException e) {
-		}
-		if (removejob) {
-			jobNodeStorage.deleteJobNode();
-			saturnExecutorService.removeJobName(jobName);
-		}
-		
-		JobRegistry.clearJob(executorName, jobName);
-		if (executorService != null && !executorService.isShutdown()) {
-			executorService.shutdown();
+			zkCacheManager.shutdown();
+
+			if (removejob) {
+				try {
+					Thread.sleep(500);// NOSONAR
+				} catch (InterruptedException ignore) {
+					log.warn(ignore.getMessage());
+				}
+				jobNodeStorage.deleteJobNode();
+				saturnExecutorService.removeJobName(jobName);
+			}
+
+			JobRegistry.clearJob(executorName, jobName);
+			if (executorService != null && !executorService.isShutdown()) {
+				executorService.shutdown();
+			}
 		}
 	}
 
 	/**
 	 * 重新调度作业.
-	 * 
+	 *
 	 * @param cronExpression crom表达式
 	 */
 	public void rescheduleJob(final String cronExpression) {
@@ -396,7 +405,7 @@ public class JobScheduler {
 	public ConfigurationService getConfigService() {
 		return configService;
 	}
-	
+
 	public ReportService getReportService() {
 		return reportService;
 	}
@@ -429,10 +438,6 @@ public class JobScheduler {
 		return statisticsService;
 	}
 
-	public OffsetService getOffsetService() {
-		return offsetService;
-	}
-
 	public AnalyseService getAnalyseService() {
 		return analyseService;
 	}
@@ -444,7 +449,7 @@ public class JobScheduler {
 	public JobNodeStorage getJobNodeStorage() {
 		return jobNodeStorage;
 	}
-	
+
 	public ZkCacheManager getZkCacheManager() {
 		return zkCacheManager;
 	}
@@ -452,5 +457,5 @@ public class JobScheduler {
 	public ExecutorService getExecutorService() {
 		return executorService;
 	}
-	
+
 }

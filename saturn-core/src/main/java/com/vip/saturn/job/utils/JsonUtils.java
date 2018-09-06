@@ -1,12 +1,13 @@
 package com.vip.saturn.job.utils;
 
-import java.text.SimpleDateFormat;
-
 import org.codehaus.jackson.map.ObjectMapper;
 import org.codehaus.jackson.map.ser.std.NullSerializer;
 import org.codehaus.jackson.type.JavaType;
+import org.codehaus.jackson.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.text.SimpleDateFormat;
 
 /**
  * Json Util
@@ -43,8 +44,8 @@ public class JsonUtils {
 	}
 
 	/**
-	 *  从JSON转换为对象
-	 * @param <T> 转换的Java类型 
+	 * 从JSON转换为对象
+	 * @param <T> 转换的Java类型
 	 * @param jsonStr JSON字符串
 	 * @param type 指定类型
 	 * @return 转换后的对象
@@ -58,7 +59,7 @@ public class JsonUtils {
 		}
 		return result;
 	}
-	
+
 	/**
 	 * 从JSON转换为对象
 	 * @param jsonStr JSON字符串
@@ -74,5 +75,15 @@ public class JsonUtils {
 		}
 		return result;
 	}
-	
+
+	public static <T> T fromJSON(String jsonStr, TypeReference<T> type) {
+		T result = null;
+		try {
+			result = getObjectMapper().readValue(jsonStr, type);
+		} catch (Exception e) {
+			log.error("msg=Fail at fromJSON: ", e);
+		}
+		return result;
+	}
+
 }

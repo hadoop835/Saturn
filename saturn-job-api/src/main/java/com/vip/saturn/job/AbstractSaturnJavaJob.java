@@ -1,45 +1,69 @@
 package com.vip.saturn.job;
 
-import java.util.Map;
+public abstract class AbstractSaturnJavaJob extends BaseSaturnJob {
 
-import com.vip.saturn.job.exception.SaturnJobException;
-
-public abstract class AbstractSaturnJavaJob {
-	private Object saturnApi;
-	
-	public void setSaturnApi(Object saturnApi) {
-		this.saturnApi = saturnApi;
-	}
 	/**
-	 * java 作业处理入口
+	 * Java作业处理入口
 	 * @param jobName 作业名
-	 * @param shardItem 分片ID
+	 * @param shardItem 分片项
 	 * @param shardParam 分片参数
-	 * @param shardingContext 其它参数信息（预留）
+	 * @param shardingContext 其它参数信息
+	 * @return 返回执行结果
+	 * @throws InterruptedException 注意处理中断异常
 	 */
-	public abstract SaturnJobReturn handleJavaJob(String jobName, Integer shardItem, String shardParam, SaturnJobExecutionContext shardingContext) throws InterruptedException;
-	
-	public void onTimeout(String jobName, Integer key, String value, SaturnJobExecutionContext shardingContext) {
+	public abstract SaturnJobReturn handleJavaJob(String jobName, Integer shardItem, String shardParam,
+			SaturnJobExecutionContext shardingContext) throws InterruptedException;
+
+	/**
+	 * 超时强杀之前调用此方法
+	 * @param jobName 作业名
+	 * @param shardItem 分片项
+	 * @param shardParam 分片参数
+	 * @param shardingContext 其它参数信息
+	 */
+	public void beforeTimeout(String jobName, Integer shardItem, String shardParam,
+			SaturnJobExecutionContext shardingContext) {
+		// 由作业类实现逻辑
 	}
 
-	public void beforeTimeout(String jobName, Integer key, String value, SaturnJobExecutionContext shardingContext) {
+	/**
+	 * 超时强杀之后调用此方法
+	 * @param jobName 作业名
+	 * @param shardItem 分片项
+	 * @param shardParam 分片参数
+	 * @param shardingContext 其它参数信息
+	 */
+	public void onTimeout(String jobName, Integer shardItem, String shardParam,
+			SaturnJobExecutionContext shardingContext) {
+		// 由作业类实现逻辑
 	}
-	
-	public void postForceStop(String jobName, Integer key, String value, SaturnJobExecutionContext shardingContext) {
+
+	/**
+	 * 在saturn-console对作业立即终止，或者优雅退出超时，或者与zk失去连接时，都会在强杀业务线程之前调用此方法。
+	 * <p>
+	 * 注意，作业执行超时，强杀之前不会调用此方法，而是调用{@link #beforeTimeout(String, Integer, String, SaturnJobExecutionContext)}方法。
+	 * @param jobName 作业名
+	 * @param shardItem 分片项
+	 * @param shardParam 分片参数
+	 * @param shardingContext 其它参数信息
+	 */
+	public void beforeForceStop(String jobName, Integer shardItem, String shardParam,
+			SaturnJobExecutionContext shardingContext) {
+		// 由作业类实现逻辑
 	}
-	
-	public void updateJobCron(String jobName, String cron, Map<String, String> customContext) throws SaturnJobException {
-		if(saturnApi != null){
-			Class<?> clazz = saturnApi.getClass();
-			try {
-				clazz.getMethod("updateJobCron", String.class,String.class,Map.class).invoke(saturnApi, jobName, cron, customContext);
-			} catch (Exception e) {
-				throw new RuntimeException(e);
-			} 
-		}
+
+	/**
+	 * 在saturn-console对作业立即终止，或者优雅退出超时，或者与zk失去连接时，都会在强杀业务线程之后调用此方法。
+	 * <p>
+	 * 注意，作业执行超时，强杀之后不会调用此方法，而是调用{@link #onTimeout(String, Integer, String, SaturnJobExecutionContext)}方法。
+	 * @param jobName 作业名
+	 * @param shardItem 分片项
+	 * @param shardParam 分片参数
+	 * @param shardingContext 其它参数信息
+	 */
+	public void postForceStop(String jobName, Integer shardItem, String shardParam,
+			SaturnJobExecutionContext shardingContext) {
+		// 由作业类实现逻辑
 	}
-	
-	public static Object getObject(){
-		return null;
-	}
+
 }

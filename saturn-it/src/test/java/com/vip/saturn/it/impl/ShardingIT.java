@@ -1,16 +1,5 @@
 package com.vip.saturn.it.impl;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.util.List;
-
-import org.apache.curator.framework.CuratorFramework;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.FixMethodOrder;
-import org.junit.Test;
-import org.junit.runners.MethodSorters;
-
 import com.vip.saturn.it.AbstractSaturnIT;
 import com.vip.saturn.it.JobType;
 import com.vip.saturn.it.job.SimpleJavaJob;
@@ -21,19 +10,29 @@ import com.vip.saturn.job.internal.storage.JobNodePath;
 import com.vip.saturn.job.sharding.node.SaturnExecutorsNode;
 import com.vip.saturn.job.utils.ItemUtils;
 import com.vip.saturn.job.utils.SystemEnvProperties;
+import org.apache.curator.framework.CuratorFramework;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+import org.junit.FixMethodOrder;
+import org.junit.Test;
+import org.junit.runners.MethodSorters;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 public class ShardingIT extends AbstractSaturnIT {
 
 	@BeforeClass
 	public static void setUp() throws Exception {
-		startNamespaceShardingManagerList(1);
+		startSaturnConsoleList(1);
 	}
 
 	@AfterClass
 	public static void tearDown() throws Exception {
 		stopExecutorList();
-		stopNamespaceShardingManagerList();
+		stopSaturnConsoleList();
 	}
 
 	@Test
@@ -63,44 +62,44 @@ public class ShardingIT extends AbstractSaturnIT {
 		Thread.sleep(1000);
 
 		assertThat(regCenter.getDirectly(SaturnExecutorsNode.SHARDING_COUNT_PATH)).isEqualTo("4");
-		
-		waitForFinish(new FinishCheck(){
+
+		waitForFinish(new FinishCheck() {
 
 			@Override
 			public boolean docheck() {
-				if(isNeedSharding(jobConfiguration)){
+				if (isNeedSharding(jobConfiguration)) {
 					return false;
 				}
 				return true;
 			}
-			
-		},10);
-		List<Integer> items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+
+		}, 10);
+		List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		assertThat(items).contains(0, 1, 2);
 
 		Main executor2 = startOneNewExecutorList();// 启动第2台executor
 		Thread.sleep(1000);
 		runAtOnce(jobName);
 		Thread.sleep(1000);
-		waitForFinish(new FinishCheck(){
+		waitForFinish(new FinishCheck() {
 
 			@Override
 			public boolean docheck() {
-				if(isNeedSharding(jobConfiguration)){
+				if (isNeedSharding(jobConfiguration)) {
 					return false;
 				}
 				return true;
 			}
-			
-		},10);
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+
+		}, 10);
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		assertThat(items).isNotEmpty();
 		System.out.println(items);
 
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 		System.out.println(items);
 		assertThat(items).isNotEmpty();
 
@@ -108,74 +107,74 @@ public class ShardingIT extends AbstractSaturnIT {
 		Thread.sleep(1000);
 		runAtOnce(jobName);
 		Thread.sleep(1000);
-		
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor3.getExecutorName()))));
+
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor3.getExecutorName()))));
 		System.out.println(items);
 		assertThat(items).hasSize(1);
 
-		stopExecutor(0); //停第1个executor
+		stopExecutor(0); // 停第1个executor
 
 		Thread.sleep(1000);
 		assertThat(regCenter.getDirectly(SaturnExecutorsNode.SHARDING_COUNT_PATH)).isEqualTo("10");
-		
+
 		Thread.sleep(1000);
 		runAtOnce(jobName);
 		Thread.sleep(1000);
-		waitForFinish(new FinishCheck(){
+		waitForFinish(new FinishCheck() {
 
 			@Override
 			public boolean docheck() {
-				if(isNeedSharding(jobConfiguration)){
+				if (isNeedSharding(jobConfiguration)) {
 					return false;
 				}
 				return true;
 			}
-			
-		},10);
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+
+		}, 10);
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		System.out.println(items);
 		assertThat(items).isEmpty();
-		
-		
-		stopExecutor(1); //停第2个executor
+
+		stopExecutor(1); // 停第2个executor
 		Thread.sleep(1000);
 		runAtOnce(jobName);
 		Thread.sleep(1000);
-		waitForFinish(new FinishCheck(){
+		waitForFinish(new FinishCheck() {
 
 			@Override
 			public boolean docheck() {
-				if(isNeedSharding(jobConfiguration)){
+				if (isNeedSharding(jobConfiguration)) {
 					return false;
 				}
 				return true;
 			}
-			
-		},10);
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+
+		}, 10);
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 		System.out.println(items);
 		assertThat(items).isEmpty();
-		
-		//分片全部落到第3个executor
-		 items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor3.getExecutorName()))));
+
+		// 分片全部落到第3个executor
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor3.getExecutorName()))));
 		assertThat(items).contains(0, 1, 2);
 
 		disableJob(jobName);
-		removeJob(jobConfiguration.getJobName());
-		
+		Thread.sleep(1000);
+		removeJob(jobName);
+
 		stopExecutorList();
 		Thread.sleep(2000);
 		forceRemoveJob(jobName);
 	}
-	
+
 	@Test
 	public void test_D_PreferList() throws Exception {
 		Main executor1 = startOneNewExecutorList();// 启动第1台executor
-		
+
 		int shardCount = 3;
 		String jobName = "javaITJob";
 
@@ -209,8 +208,8 @@ public class ShardingIT extends AbstractSaturnIT {
 			}
 
 		}, 10);
-		List<Integer> items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+		List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		assertThat(items).contains(0, 1, 2);
 
 		Main executor2 = startOneNewExecutorList();// 启动第2台executor
@@ -228,16 +227,16 @@ public class ShardingIT extends AbstractSaturnIT {
 			}
 
 		}, 10);
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		assertThat(items).contains(0, 1, 2);
 
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 		System.out.println(items);
 		assertThat(items).isEmpty();
 
-		stopExecutor(0); //停第1个executor
+		stopExecutor(0); // 停第1个executor
 		Thread.sleep(1000);
 		runAtOnce(jobName);
 		Thread.sleep(1000);
@@ -252,17 +251,17 @@ public class ShardingIT extends AbstractSaturnIT {
 			}
 
 		}, 10);
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		System.out.println(items);
 		assertThat(items).isEmpty();
-		
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 		System.out.println(items);
 		assertThat(items).contains(0, 1, 2);
 
-		//再次启动第一个executor
+		// 再次启动第一个executor
 		startExecutor(0);
 		Thread.sleep(1000);
 		runAtOnce(jobName);
@@ -279,30 +278,30 @@ public class ShardingIT extends AbstractSaturnIT {
 
 		}, 10);
 
-		//分片会重新回到executor1上
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+		// 分片会重新回到executor1上
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		log.info("sharding at executor1 {}: ", items);
 		assertThat(items).contains(0, 1, 2);
 
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 		log.info("sharding at executor2 {}: ", items);
 		assertThat(items).isEmpty();
 
 		disableJob(jobName);
 		removeJob(jobConfiguration.getJobName());
-		
+
 		Thread.sleep(1000);
-		
+
 		stopExecutorList();
 		forceRemoveJob(jobName);
 	}
-	
+
 	@Test
 	public void test_E_PreferListOnly() throws Exception {
 		Main executor1 = startOneNewExecutorList();// 启动第1台executor
-		
+
 		int shardCount = 3;
 		String jobName = "javaITJob";
 
@@ -319,7 +318,7 @@ public class ShardingIT extends AbstractSaturnIT {
 		jobConfiguration.setShardingItemParameters("0=0,1=1,2=2");
 		jobConfiguration.setPreferList(executor1.getExecutorName());
 		jobConfiguration.setUseDispreferList(false);
-		
+
 		addJob(jobConfiguration);
 		Thread.sleep(1000);
 		enableJob(jobConfiguration.getJobName());
@@ -327,76 +326,76 @@ public class ShardingIT extends AbstractSaturnIT {
 
 		runAtOnce(jobName);
 		Thread.sleep(1000);
-		waitForFinish(new FinishCheck(){
+		waitForFinish(new FinishCheck() {
 
 			@Override
 			public boolean docheck() {
-				if(isNeedSharding(jobConfiguration)){
+				if (isNeedSharding(jobConfiguration)) {
 					return false;
 				}
 				return true;
 			}
-			
-		},10);
-		List<Integer> items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+
+		}, 10);
+		List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		assertThat(items).contains(0, 1, 2);
 
 		Main executor2 = startOneNewExecutorList();// 启动第2台executor
 		Thread.sleep(1000);
 		runAtOnce(jobName);
 		Thread.sleep(1000);
-		waitForFinish(new FinishCheck(){
+		waitForFinish(new FinishCheck() {
 
 			@Override
 			public boolean docheck() {
-				if(isNeedSharding(jobConfiguration)){
+				if (isNeedSharding(jobConfiguration)) {
 					return false;
 				}
 				return true;
 			}
-			
-		},10);
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+
+		}, 10);
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		assertThat(items).contains(0, 1, 2);
 
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 		System.out.println(items);
 		assertThat(items).isEmpty();
 
-		stopExecutor(0); //停第1个executor
+		stopExecutor(0); // 停第1个executor
 		Thread.sleep(1000);
 		runAtOnce(jobName);
 		Thread.sleep(1000);
-		waitForFinish(new FinishCheck(){
+		waitForFinish(new FinishCheck() {
 
 			@Override
 			public boolean docheck() {
-				if(isNeedSharding(jobConfiguration)){
+				if (isNeedSharding(jobConfiguration)) {
 					return false;
 				}
 				return true;
 			}
-			
-		},10);
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
-		System.out.println(items);
-		assertThat(items).isEmpty();
-		
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+
+		}, 10);
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		System.out.println(items);
 		assertThat(items).isEmpty();
 
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+		System.out.println(items);
+		assertThat(items).isEmpty();
 
 		disableJob(jobName);
-		removeJob(jobConfiguration.getJobName());
-		
 		Thread.sleep(1000);
-		
+		removeJob(jobName);
+
+		Thread.sleep(1000);
+
 		stopExecutorList();
 		forceRemoveJob(jobName);
 	}
@@ -443,15 +442,16 @@ public class ShardingIT extends AbstractSaturnIT {
 				return !isNeedSharding(jobConfiguration);
 			}
 		}, 10);
-		List<Integer> items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+		List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 		assertThat(items).contains(0);
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		assertThat(items).isEmpty();
 		// executor2下线
 		final String executor2Name = saturnExecutorList.get(1).getExecutorName();
 		stopExecutor(1);
+		Thread.sleep(1000L);
 		// 等待sharding分片完成
 		waitForFinish(new FinishCheck() {
 			@Override
@@ -460,8 +460,8 @@ public class ShardingIT extends AbstractSaturnIT {
 			}
 		}, 10);
 		// executor1仍然获取不到分片
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		assertThat(items).isEmpty();
 
 		stopExecutorList();
@@ -511,15 +511,16 @@ public class ShardingIT extends AbstractSaturnIT {
 			}
 		}, 10);
 		// executor2获取到0分片，executor1获取不到分片
-		List<Integer> items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+		List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 		assertThat(items).contains(0);
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		assertThat(items).isEmpty();
 		// executor2下线
 		final String executor2Name = saturnExecutorList.get(1).getExecutorName();
 		stopExecutor(1);
+		Thread.sleep(1000L);
 		// 等待sharding分片完成
 		waitForFinish(new FinishCheck() {
 			@Override
@@ -536,8 +537,8 @@ public class ShardingIT extends AbstractSaturnIT {
 			}
 		}, 10);
 		// executor1仍然获取不到分片
-		items = ItemUtils.toItemList(
-				regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+		items = ItemUtils.toItemList(regCenter.getDirectly(
+				JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 		assertThat(items).isEmpty();
 
 		stopExecutorList();
@@ -552,11 +553,11 @@ public class ShardingIT extends AbstractSaturnIT {
 		Main executor1 = startOneNewExecutorList(); // 启动一个非容器executor
 
 		boolean cleanOld = SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN;
-		String taskOld = SystemEnvProperties.VIP_SATURN_DCOS_TASK;
+		String taskOld = SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID;
 		try {
 			String taskId = "test1";
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = true;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskId;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskId;
 			Main executor2 = startOneNewExecutorList(); // 启动一个容器executor
 
 			final int shardCount = 2;
@@ -595,15 +596,16 @@ public class ShardingIT extends AbstractSaturnIT {
 			}, 10);
 
 			// executor2获取到0、1分片，executor1获取不到分片
-			List<Integer> items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+			List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 			assertThat(items).contains(0, 1);
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 			assertThat(items).isEmpty();
 			// executor2下线
 			final String executor2Name = saturnExecutorList.get(1).getExecutorName();
 			stopExecutor(1);
+			Thread.sleep(1000L);
 			// 等待sharding分片完成
 			waitForFinish(new FinishCheck() {
 				@Override
@@ -611,14 +613,14 @@ public class ShardingIT extends AbstractSaturnIT {
 					return isNeedSharding(jobConfiguration);
 				}
 			}, 10);
-			
+
 			waitForFinish(new FinishCheck() {
 				@Override
 				public boolean docheck() {
 					return hasCompletedZnodeForAllShards(jobName, shardCount);
 				}
 			}, 10);
-			
+
 			runAtOnce(jobName);
 			// 等待拿走分片
 			waitForFinish(new FinishCheck() {
@@ -628,15 +630,15 @@ public class ShardingIT extends AbstractSaturnIT {
 				}
 			}, 10);
 			// executor1仍然获取0、1分片
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 			assertThat(items).contains(0, 1);
 
 			stopExecutorList();
 			forceRemoveJob(jobName);
 		} finally {
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = cleanOld;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskOld;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskOld;
 		}
 	}
 
@@ -648,11 +650,11 @@ public class ShardingIT extends AbstractSaturnIT {
 		Main executor1 = startOneNewExecutorList(); // 启动一个非容器executor
 
 		boolean cleanOld = SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN;
-		String taskOld = SystemEnvProperties.VIP_SATURN_DCOS_TASK;
+		String taskOld = SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID;
 		try {
 			String taskId = "test1";
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = true;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskId;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskId;
 			Main executor2 = startOneNewExecutorList(); // 启动一个容器executor
 
 			int shardCount = 2;
@@ -691,15 +693,16 @@ public class ShardingIT extends AbstractSaturnIT {
 			}, 10);
 
 			// executor2获取到0、1分片，executor1获取不到分片
-			List<Integer> items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+			List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 			assertThat(items).contains(0, 1);
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 			assertThat(items).isEmpty();
 			// executor2下线
 			final String executor2Name = saturnExecutorList.get(1).getExecutorName();
 			stopExecutor(1);
+			Thread.sleep(1000L);
 			// 等待sharding分片完成
 			waitForFinish(new FinishCheck() {
 				@Override
@@ -716,15 +719,15 @@ public class ShardingIT extends AbstractSaturnIT {
 				}
 			}, 10);
 			// executor1仍然获取不到分片
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 			assertThat(items).isEmpty();
 
 			stopExecutorList();
 			forceRemoveJob(jobName);
 		} finally {
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = cleanOld;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskOld;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskOld;
 		}
 	}
 
@@ -736,11 +739,11 @@ public class ShardingIT extends AbstractSaturnIT {
 		Main executor1 = startOneNewExecutorList(); // 启动一个非容器executor
 
 		boolean cleanOld = SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN;
-		String taskOld = SystemEnvProperties.VIP_SATURN_DCOS_TASK;
+		String taskOld = SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID;
 		try {
 			String taskId = "test1";
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = true;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskId;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskId;
 			Main executor2 = startOneNewExecutorList(); // 启动一个容器executor
 
 			int shardCount = 2;
@@ -779,15 +782,16 @@ public class ShardingIT extends AbstractSaturnIT {
 			}, 10);
 
 			// executor2获取到0分片，executor1获取不到分片
-			List<Integer> items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+			List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 			assertThat(items).hasSize(1).contains(0);
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 			assertThat(items).isEmpty();
 			// executor2下线
 			final String executor2Name = saturnExecutorList.get(1).getExecutorName();
 			stopExecutor(1);
+			Thread.sleep(1000L);
 			// 等待sharding分片完成
 			waitForFinish(new FinishCheck() {
 				@Override
@@ -804,15 +808,15 @@ public class ShardingIT extends AbstractSaturnIT {
 				}
 			}, 10);
 			// executor1仍然拿不到分片
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 			assertThat(items).isEmpty();
 
 			stopExecutorList();
 			forceRemoveJob(jobName);
 		} finally {
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = cleanOld;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskOld;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskOld;
 		}
 	}
 
@@ -824,11 +828,11 @@ public class ShardingIT extends AbstractSaturnIT {
 		Main executor1 = startOneNewExecutorList(); // 启动一个非容器executor
 
 		boolean cleanOld = SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN;
-		String taskOld = SystemEnvProperties.VIP_SATURN_DCOS_TASK;
+		String taskOld = SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID;
 		try {
 			String taskId = "test1";
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = true;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskId;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskId;
 			Main executor2 = startOneNewExecutorList(); // 启动一个容器executor
 
 			int shardCount = 2;
@@ -867,15 +871,16 @@ public class ShardingIT extends AbstractSaturnIT {
 			}, 10);
 
 			// executor2获取到0分片，executor1获取不到分片
-			List<Integer> items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
+			List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor2.getExecutorName()))));
 			assertThat(items).hasSize(1).contains(0);
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 			assertThat(items).isEmpty();
 			// executor2下线
 			final String executor2Name = saturnExecutorList.get(1).getExecutorName();
 			stopExecutor(1);
+			Thread.sleep(1000L);
 			// 等待sharding分片完成
 			waitForFinish(new FinishCheck() {
 				@Override
@@ -892,18 +897,18 @@ public class ShardingIT extends AbstractSaturnIT {
 				}
 			}, 10);
 			// executor1仍然获取不到分片
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(
+					JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(executor1.getExecutorName()))));
 			assertThat(items).isEmpty();
 
 			stopExecutorList();
 			forceRemoveJob(jobName);
 		} finally {
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = cleanOld;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskOld;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskOld;
 		}
 	}
-	
+
 	/**
 	 * preferList配置了无效容器资源，并且useDispreferList为true。则非容器资源会得到分片。
 	 */
@@ -912,11 +917,11 @@ public class ShardingIT extends AbstractSaturnIT {
 		Main logicExecutor = startOneNewExecutorList(); // 启动一个非容器executor
 
 		boolean cleanOld = SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN;
-		String taskOld = SystemEnvProperties.VIP_SATURN_DCOS_TASK;
+		String taskOld = SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID;
 		try {
 			String taskId = "test1";
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = true;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskId;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskId;
 			Main vdosExecutor = startOneNewExecutorList(); // 启动一个容器executor
 
 			int shardCount = 2;
@@ -955,11 +960,11 @@ public class ShardingIT extends AbstractSaturnIT {
 			}, 10);
 
 			// vdosExecutor获取不到分片，logicExecutor获取到0、1分片
-			List<Integer> items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(vdosExecutor.getExecutorName()))));
+			List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName,
+					ShardingNode.getShardingNode(vdosExecutor.getExecutorName()))));
 			assertThat(items).isEmpty();
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName,
+					ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
 			assertThat(items).contains(0, 1);
 			// vdosExecutor下线
 			stopExecutor(1);
@@ -978,25 +983,25 @@ public class ShardingIT extends AbstractSaturnIT {
 				}
 			}, 10);
 			// logicExecutor仍然获取0、1分片
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName,
+					ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
 			assertThat(items).contains(0, 1);
 
 			stopExecutorList();
 			forceRemoveJob(jobName);
 		} finally {
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = cleanOld;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskOld;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskOld;
 		}
 	}
-	
+
 	/**
 	 * preferList配置了无效容器资源，并且useDispreferList为true。先添加作业，启用作业，再启动容器，再启动物理机。则非容器资源会得到分片。
 	 */
 	@Test
 	public void test_L_ContainerWithUseDispreferList_ButInvalidTaskId_ContainerFirst() throws Exception {
 		boolean cleanOld = SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN;
-		String taskOld = SystemEnvProperties.VIP_SATURN_DCOS_TASK;
+		String taskOld = SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID;
 		try {
 			int shardCount = 2;
 			String jobName = "test_L_ContainerWithUseDispreferList_ButInvalidTaskId_ContainerFirst";
@@ -1019,27 +1024,27 @@ public class ShardingIT extends AbstractSaturnIT {
 			addJob(jobConfiguration);
 			Thread.sleep(1000);
 			enableJob(jobConfiguration.getJobName());
-			
+
 			// 启动一个容器executor
 			String taskId = "test1";
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = true;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskId;
-			Main vdosExecutor = startOneNewExecutorList(); 
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskId;
+			Main vdosExecutor = startOneNewExecutorList();
 
 			// 启动一个非容器executor
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = false;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = null;
-			Main logicExecutor = startOneNewExecutorList(); 
-			
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = null;
+			Main logicExecutor = startOneNewExecutorList();
+
 			waitForFinish(new FinishCheck() {
 				@Override
 				public boolean docheck() {
 					return isNeedSharding(jobConfiguration);
 				}
 			}, 10);
-			
+
 			runAtOnce(jobName);
-			
+
 			waitForFinish(new FinishCheck() {
 				@Override
 				public boolean docheck() {
@@ -1048,14 +1053,15 @@ public class ShardingIT extends AbstractSaturnIT {
 			}, 10);
 
 			// vdosExecutor获取不到分片，logicExecutor获取到0、1分片
-			List<Integer> items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(vdosExecutor.getExecutorName()))));
+			List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName,
+					ShardingNode.getShardingNode(vdosExecutor.getExecutorName()))));
 			assertThat(items).isEmpty();
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName,
+					ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
 			assertThat(items).contains(0, 1);
 			// vdosExecutor下线
 			stopExecutor(0);
+			Thread.sleep(1000L);
 			waitForFinish(new FinishCheck() {
 				@Override
 				public boolean docheck() {
@@ -1070,25 +1076,25 @@ public class ShardingIT extends AbstractSaturnIT {
 				}
 			}, 10);
 			// logicExecutor仍然获取0、1分片
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName,
+					ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
 			assertThat(items).contains(0, 1);
 
 			stopExecutorList();
 			forceRemoveJob(jobName);
 		} finally {
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = cleanOld;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskOld;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskOld;
 		}
 	}
-	
+
 	/**
 	 * preferList配置了无效物理资源，并且useDispreferList为true。先添加作业，启用作业，再启动容器，再启动物理机。则物理资源会得到分片。
 	 */
 	@Test
 	public void test_M_UseDispreferList_ButInvalidLogicPreferList() throws Exception {
 		boolean cleanOld = SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN;
-		String taskOld = SystemEnvProperties.VIP_SATURN_DCOS_TASK;
+		String taskOld = SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID;
 		try {
 			int shardCount = 2;
 			String jobName = "test_L_ContainerWithUseDispreferList_ButInvalidTaskId_ContainerFirst";
@@ -1111,27 +1117,27 @@ public class ShardingIT extends AbstractSaturnIT {
 			addJob(jobConfiguration);
 			Thread.sleep(1000);
 			enableJob(jobConfiguration.getJobName());
-			
+
 			// 启动一个容器executor
 			String taskId = "test1";
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = true;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskId;
-			Main vdosExecutor = startOneNewExecutorList(); 
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskId;
+			Main vdosExecutor = startOneNewExecutorList();
 
 			// 启动一个非容器executor
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = false;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = null;
-			Main logicExecutor = startOneNewExecutorList(); 
-			
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = null;
+			Main logicExecutor = startOneNewExecutorList();
+
 			waitForFinish(new FinishCheck() {
 				@Override
 				public boolean docheck() {
 					return isNeedSharding(jobConfiguration);
 				}
 			}, 10);
-			
+
 			runAtOnce(jobName);
-			
+
 			waitForFinish(new FinishCheck() {
 				@Override
 				public boolean docheck() {
@@ -1140,14 +1146,15 @@ public class ShardingIT extends AbstractSaturnIT {
 			}, 10);
 
 			// vdosExecutor获取不到分片，logicExecutor获取到0、1分片
-			List<Integer> items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(vdosExecutor.getExecutorName()))));
+			List<Integer> items = ItemUtils.toItemList(regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName,
+					ShardingNode.getShardingNode(vdosExecutor.getExecutorName()))));
 			assertThat(items).isEmpty();
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName,
+					ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
 			assertThat(items).contains(0, 1);
 			// vdosExecutor下线
 			stopExecutor(0);
+			Thread.sleep(1000L);
 			waitForFinish(new FinishCheck() {
 				@Override
 				public boolean docheck() {
@@ -1162,15 +1169,15 @@ public class ShardingIT extends AbstractSaturnIT {
 				}
 			}, 10);
 			// logicExecutor仍然获取0、1分片
-			items = ItemUtils.toItemList(
-					regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName, ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
+			items = ItemUtils.toItemList(regCenter.getDirectly(JobNodePath.getNodeFullPath(jobName,
+					ShardingNode.getShardingNode(logicExecutor.getExecutorName()))));
 			assertThat(items).contains(0, 1);
 
 			stopExecutorList();
 			forceRemoveJob(jobName);
 		} finally {
 			SystemEnvProperties.VIP_SATURN_EXECUTOR_CLEAN = cleanOld;
-			SystemEnvProperties.VIP_SATURN_DCOS_TASK = taskOld;
+			SystemEnvProperties.VIP_SATURN_CONTAINER_DEPLOYMENT_ID = taskOld;
 		}
 	}
 
@@ -1246,8 +1253,8 @@ public class ShardingIT extends AbstractSaturnIT {
 	}
 
 	/**
-	 * sharding仅仅通知分片信息改变的作业
-	 * test the fix: https://github.com/vipshop/Saturn/commit/9b64dfe50c21c1b4f3e3f781d5281be06a0a8d08
+	 * sharding仅仅通知分片信息改变的作业 test the fix:
+	 * https://github.com/vipshop/Saturn/commit/9b64dfe50c21c1b4f3e3f781d5281be06a0a8d08
 	 */
 	@Test
 	public void test_O_NotifyNecessaryJobsPrior() throws Exception {
@@ -1344,7 +1351,8 @@ public class ShardingIT extends AbstractSaturnIT {
 				return !isNeedSharding(jobConfiguration1);
 			}
 		}, 10);
-		long mtime = ((CuratorFramework) regCenter.getRawClient()).checkExists().forPath(SaturnExecutorsNode.getShardingContentElementNodePath("0")).getMtime();
+		long mtime = ((CuratorFramework) regCenter.getRawClient()).checkExists()
+				.forPath(SaturnExecutorsNode.getShardingContentElementNodePath("0")).getMtime();
 
 		// 禁用作业
 		Thread.sleep(1000);
@@ -1358,7 +1366,8 @@ public class ShardingIT extends AbstractSaturnIT {
 			}
 		}, 10);
 
-		long mtime2 = ((CuratorFramework) regCenter.getRawClient()).checkExists().forPath(SaturnExecutorsNode.getShardingContentElementNodePath("0")).getMtime();
+		long mtime2 = ((CuratorFramework) regCenter.getRawClient()).checkExists()
+				.forPath(SaturnExecutorsNode.getShardingContentElementNodePath("0")).getMtime();
 
 		assertThat(mtime).isEqualTo(mtime2);
 

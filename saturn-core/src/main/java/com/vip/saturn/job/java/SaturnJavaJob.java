@@ -1,5 +1,16 @@
 package com.vip.saturn.job.java;
 
+import com.vip.saturn.job.SaturnJobReturn;
+import com.vip.saturn.job.SaturnSystemErrorGroup;
+import com.vip.saturn.job.SaturnSystemReturnCode;
+import com.vip.saturn.job.basic.*;
+import com.vip.saturn.job.internal.config.JobConfiguration;
+import org.apache.commons.lang3.StringUtils;
+import org.quartz.SchedulerException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
@@ -7,90 +18,98 @@ import java.util.Map.Entry;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 
-import org.quartz.SchedulerException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.vip.saturn.job.SaturnJobExecutionContext;
-import com.vip.saturn.job.SaturnJobReturn;
-import com.vip.saturn.job.SaturnSystemErrorGroup;
-import com.vip.saturn.job.SaturnSystemReturnCode;
-import com.vip.saturn.job.basic.AbstractSaturnJob;
-import com.vip.saturn.job.basic.CrondJob;
-import com.vip.saturn.job.basic.JavaShardingItemCallable;
-import com.vip.saturn.job.basic.JobRegistry;
-import com.vip.saturn.job.basic.SaturnApi;
-import com.vip.saturn.job.basic.SaturnConstant;
-import com.vip.saturn.job.basic.SaturnExecutionContext;
-import com.vip.saturn.job.basic.ShardingItemFutureTask;
-import com.vip.saturn.job.basic.TimeoutSchedulerExecutor;
-import com.vip.saturn.job.exception.JobException;
-import com.vip.saturn.job.internal.config.JobConfiguration;
-
 public class SaturnJavaJob extends CrondJob {
 	private static Logger log = LoggerFactory.getLogger(SaturnJavaJob.class);
 
 	private Map<Integer, ShardingItemFutureTask> futureTaskMap;
 
 	private Object jobBusinessInstance = null;
-	
+
 	public JavaShardingItemCallable createCallable(String jobName, Integer item, String itemValue, int timeoutSeconds,
-			SaturnExecutionContext shardingContext,  AbstractSaturnJob saturnJob){
-		return new JavaShardingItemCallable(jobName, item, itemValue,
-				timeoutSeconds, shardingContext, saturnJob);
+			SaturnExecutionContext shardingContext, AbstractSaturnJob saturnJob) {
+		return new JavaShardingItemCallable(jobName, item, itemValue, timeoutSeconds, shardingContext, saturnJob);
 	}
-	
+
 	@Override
-	public void init() throws SchedulerException{
+	public void init() throws SchedulerException {
 		super.init();
 		createJobBusinessInstanceIfNecessary();
+		getJobVersionIfNecessary();
+	}
+
+	private void getJobVersionIfNecessary() throws SchedulerException {
+		if (jobBusinessInstance != null) {
+			ClassLoader oldClassLoader = Thread.currentThread().getContextClassLoader();
+			Thread.currentThread().setContextClassLoader(saturnExecutorService.getJobClassLoader());
+			try {
+				String version = (String) jobBusinessInstance.getClass().getMethod("getJobVersion")
+						.invoke(jobBusinessInstance);
+				setJobVersion(version);
+			} catch (Throwable t) {
+				log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName,
+						"error throws during get job version"), t);
+				throw new SchedulerException(t);
+			} finally {
+				Thread.currentThread().setContextClassLoader(oldClassLoader);
+			}
+		}
 	}
 
 	private void createJobBusinessInstanceIfNecessary() throws SchedulerException {
 		JobConfiguration currentConf = configService.getJobConfiguration();
 		String jobClassStr = currentConf.getJobClass();
-		if (jobClassStr != null && !jobClassStr.trim().isEmpty()) {
-			jobBusinessInstance = JobRegistry.getJobBusinessInstance(executorName, jobName);
-			if (jobBusinessInstance == null) {
-				ClassLoader jobClassLoader = saturnExecutorService.getJobClassLoader();
-				ClassLoader executorClassLoader = saturnExecutorService.getExecutorClassLoader();
-				Thread.currentThread().setContextClassLoader(jobClassLoader);
-				try {
-					Class<?> jobClass = saturnExecutorService.getJobClassLoader().loadClass(currentConf.getJobClass());
-					try {
-						Method getObject = jobClass.getMethod("getObject");
-						if (getObject != null) {
-							try {
-								jobBusinessInstance = getObject.invoke(null);
-							} catch (Throwable t) {
-								log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, jobName, jobClassStr + " getObject error"), t);
-							}
-						}
-					} catch (Exception ex) {//NOSONAR
-						//log.error("",ex);
-					}
+		if (StringUtils.isBlank(jobClassStr)) {
+			throw new SchedulerException("init job business instance failed, the job class is " + jobClassStr);
+		}
 
-					if (jobBusinessInstance == null) {
-						jobBusinessInstance = jobClass.newInstance();
-					}
-					SaturnApi saturnApi = new SaturnApi();
-					saturnApi.setConfigService(getConfigService());
-					jobClass.getMethod("setSaturnApi", Object.class).invoke(jobBusinessInstance, saturnApi);
-
-					JobRegistry.addJobBusinessInstance(executorName, jobName, jobBusinessInstance);
-				} catch (Throwable t) {
-					log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, jobName, "create job business instance error"), t);
-					throw new SchedulerException(t);
-				} finally {
-					Thread.currentThread().setContextClassLoader(executorClassLoader);
-				}
+		if (jobBusinessInstance == null) {
+			ClassLoader oldClassLoader = Thread.currentThread().getContextClassLoader();
+			ClassLoader jobClassLoader = saturnExecutorService.getJobClassLoader();
+			Thread.currentThread().setContextClassLoader(jobClassLoader);
+			try {
+				reflectionInvokeInitMethodsOfJobBusinessInstance(currentConf, jobClassStr, jobClassLoader);
+			} catch (Throwable t) {
+				log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName,
+						"create job business instance error"), t);
+				throw new SchedulerException(t);
+			} finally {
+				Thread.currentThread().setContextClassLoader(oldClassLoader);
 			}
 		}
 		if (jobBusinessInstance == null) {
 			throw new SchedulerException("init job business instance failed, the job class is " + jobClassStr);
 		}
 	}
-	
+
+	private void reflectionInvokeInitMethodsOfJobBusinessInstance(JobConfiguration currentConf, String jobClassStr,
+			ClassLoader jobClassLoader)
+			throws ClassNotFoundException, InstantiationException, IllegalAccessException, InvocationTargetException,
+			NoSuchMethodException {
+		Class<?> jobClass = jobClassLoader.loadClass(currentConf.getJobClass());
+		try {
+			Method getObject = jobClass.getMethod("getObject");
+			if (getObject != null) {
+				reflectionInvokeGetObjectMethod(jobClassStr, getObject);
+			}
+		} catch (Exception ex) {// NOSONAR
+		}
+
+		if (jobBusinessInstance == null) {
+			jobBusinessInstance = jobClass.newInstance();
+		}
+		SaturnApi saturnApi = new SaturnApi(getNamespace(), executorName);
+		jobClass.getMethod("setSaturnApi", Object.class).invoke(jobBusinessInstance, saturnApi);
+	}
+
+	private void reflectionInvokeGetObjectMethod(String jobClassStr, Method getObject) {
+		try {
+			jobBusinessInstance = getObject.invoke(null);
+		} catch (Throwable t) {
+			log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName, jobClassStr + " getObject error"),
+					t);
+		}
+	}
+
 	@Override
 	protected Map<Integer, SaturnJobReturn> handleJob(final SaturnExecutionContext shardingContext) {
 		final Map<Integer, SaturnJobReturn> retMap = new HashMap<Integer, SaturnJobReturn>();
@@ -114,9 +133,8 @@ public class SaturnJavaJob extends CrondJob {
 				String jobValue = shardingItem.getValue();
 				final String itemVal = getRealItemValue(jobParameter, jobValue); // 作业分片的对应值
 
-				ShardingItemFutureTask shardingItemFutureTask = new ShardingItemFutureTask(createCallable(jobName, key, itemVal,
-						timeoutSeconds, shardingContext, this),null);		
-				shardingItemFutureTask.setExecutorService(executorService);
+				ShardingItemFutureTask shardingItemFutureTask = new ShardingItemFutureTask(
+						createCallable(jobName, key, itemVal, timeoutSeconds, shardingContext, this), null);
 				Future<?> callFuture = executorService.submit(shardingItemFutureTask);
 				if (timeoutSeconds > 0) {
 					TimeoutSchedulerExecutor.scheduleTimeoutJob(shardingContext.getExecutorName(), timeoutSeconds,
@@ -125,19 +143,19 @@ public class SaturnJavaJob extends CrondJob {
 				shardingItemFutureTask.setCallFuture(callFuture);
 				futureTaskMap.put(key, shardingItemFutureTask);
 			} catch (Throwable t) {
-				log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, jobName, t.getMessage()), t);
+				log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName, t.getMessage()), t);
 				retMap.put(key, new SaturnJobReturn(SaturnSystemReturnCode.SYSTEM_FAIL, t.getMessage(),
 						SaturnSystemErrorGroup.FAIL));
 			}
 		}
 
-		for (Entry<Integer, ShardingItemFutureTask> entry : futureTaskMap.entrySet()) {			
+		for (Entry<Integer, ShardingItemFutureTask> entry : futureTaskMap.entrySet()) {
 			Integer item = entry.getKey();
 			ShardingItemFutureTask futureTask = entry.getValue();
 			try {
 				futureTask.getCallFuture().get();
 			} catch (Exception e) {
-				log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, jobName, e.getMessage()), e);
+				log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName, e.getMessage()), e);
 				retMap.put(item, new SaturnJobReturn(SaturnSystemReturnCode.SYSTEM_FAIL, e.getMessage(),
 						SaturnSystemErrorGroup.FAIL));
 				continue;
@@ -158,61 +176,58 @@ public class SaturnJavaJob extends CrondJob {
 	public void forceStop() {
 		super.forceStop();
 
-		if (futureTaskMap != null) {
-			for (ShardingItemFutureTask shardingItemFutureTask : futureTaskMap.values()) {
-				JavaShardingItemCallable shardingItemCallable = shardingItemFutureTask.getCallable();
-				Thread currentThread = shardingItemCallable.getCurrentThread();
-				if (currentThread != null) {
-					try {
-						log.info("[{}] msg=force stop {} - {}", jobName, shardingItemCallable.getJobName(),
+		if (futureTaskMap == null) {
+			return;
+		}
+
+		for (ShardingItemFutureTask shardingItemFutureTask : futureTaskMap.values()) {
+			JavaShardingItemCallable shardingItemCallable = shardingItemFutureTask.getCallable();
+			Thread currentThread = shardingItemCallable.getCurrentThread();
+			if (currentThread != null) {
+				try {
+					if (shardingItemCallable.forceStop()) {
+						log.info("[{}] msg=Force stop job, jobName:{}, item:{}", jobName, jobName,
 								shardingItemCallable.getItem());
-						if (shardingItemCallable.forceStop()) {
-							ShardingItemFutureTask.killRunningBusinessThread(shardingItemFutureTask);
-						}
-					} catch (Throwable t) {
-						log.error(String.format(SaturnConstant.ERROR_LOG_FORMAT, jobName, t.getMessage()), t);
+						shardingItemCallable.beforeForceStop();
+						ShardingItemFutureTask.killRunningBusinessThread(shardingItemFutureTask);
 					}
+				} catch (Throwable t) {
+					log.error(String.format(SaturnConstant.LOG_FORMAT_FOR_STRING, jobName, t.getMessage()), t);
 				}
 			}
 		}
 	}
-	
+
 	@Override
 	public SaturnJobReturn doExecution(String jobName, Integer key, String value,
-			SaturnExecutionContext shardingContext, JavaShardingItemCallable callable) throws Throwable{
-		return handleJavaJob(jobName, key, value, shardingContext,callable);
+			SaturnExecutionContext shardingContext, JavaShardingItemCallable callable) throws Throwable {
+		return handleJavaJob(jobName, key, value, shardingContext, callable);
 	}
 
-	public SaturnJobReturn handleJavaJob(String jobName, Integer key, String value,
-			SaturnExecutionContext shardingContext, JavaShardingItemCallable callable) throws Throwable {
+	public SaturnJobReturn handleJavaJob(final String jobName, final Integer key, final String value,
+			SaturnExecutionContext shardingContext, final JavaShardingItemCallable callable) throws Throwable {
 
 		String jobClass = shardingContext.getJobConfiguration().getJobClass();
-		log.info("[{}] msg=Running SaturnJavaJob,  jobClass is {} ", jobName, jobClass);
+		log.info("[{}] msg=Running SaturnJavaJob,  jobClass [{}], item [{}]", jobName, jobClass, key);
 
 		try {
-			if( jobBusinessInstance == null){
-				throw new JobException("the jobClass is not found");
-			}
-			ClassLoader jobClassLoader = saturnExecutorService.getJobClassLoader();
-			ClassLoader executorClassLoader = saturnExecutorService.getExecutorClassLoader();
-			Thread.currentThread().setContextClassLoader(jobClassLoader);
-			try {
-				Class<?> saturnJobExecutionContextClazz = jobClassLoader
-						.loadClass(SaturnJobExecutionContext.class.getCanonicalName());
-
-				Object ret = jobBusinessInstance.getClass()
-						.getMethod("handleJavaJob", String.class, Integer.class, String.class,
-								saturnJobExecutionContextClazz)
-						.invoke(jobBusinessInstance, jobName, key, value, callable.getContextForJob(jobClassLoader));
-				SaturnJobReturn saturnJobReturn = (SaturnJobReturn) JavaShardingItemCallable.cloneObject(ret, executorClassLoader);
-				if(saturnJobReturn != null) {
-					callable.setBusinessReturned(true);
+			Object ret = new JobBusinessClassMethodCaller() {
+				@Override
+				protected Object internalCall(ClassLoader jobClassLoader, Class<?> saturnJobExecutionContextClazz)
+						throws Exception {
+					return jobBusinessInstance.getClass()
+							.getMethod("handleJavaJob", String.class, Integer.class, String.class,
+									saturnJobExecutionContextClazz).invoke(jobBusinessInstance, jobName, key, value,
+									callable.getContextForJob(jobClassLoader));
 				}
-				return saturnJobReturn;
-			} finally {
-				Thread.currentThread().setContextClassLoader(executorClassLoader);
-			}
+			}.call(jobBusinessInstance, saturnExecutorService);
 
+			SaturnJobReturn saturnJobReturn = (SaturnJobReturn) JavaShardingItemCallable
+					.cloneObject(ret, saturnExecutorService.getExecutorClassLoader());
+			if (saturnJobReturn != null) {
+				callable.setBusinessReturned(true);
+			}
+			return saturnJobReturn;
 		} catch (Exception e) {
 			if (e.getCause() instanceof ThreadDeath) {
 				throw e.getCause();
@@ -222,86 +237,70 @@ public class SaturnJavaJob extends CrondJob {
 		}
 	}
 
-	public void postTimeout(String jobName, Integer key, String value, SaturnExecutionContext shardingContext,
-			JavaShardingItemCallable callable) {
+	public void postTimeout(final String jobName, final Integer key, final String value,
+			SaturnExecutionContext shardingContext, final JavaShardingItemCallable callable) {
+		callJobBusinessClassMethodTimeoutOrForceStop(jobName, shardingContext, callable, "onTimeout", key, value);
+	}
+
+	public void beforeTimeout(final String jobName, final Integer key, final String value,
+			SaturnExecutionContext shardingContext, final JavaShardingItemCallable callable) {
+		callJobBusinessClassMethodTimeoutOrForceStop(jobName, shardingContext, callable, "beforeTimeout", key, value);
+	}
+
+	public void beforeForceStop(final String jobName, final Integer key, final String value,
+			SaturnExecutionContext shardingContext, final JavaShardingItemCallable callable) {
+		callJobBusinessClassMethodTimeoutOrForceStop(jobName, shardingContext, callable, "beforeForceStop", key, value);
+	}
+
+	public void postForceStop(final String jobName, final Integer key, final String value,
+			SaturnExecutionContext shardingContext, final JavaShardingItemCallable callable) {
+		callJobBusinessClassMethodTimeoutOrForceStop(jobName, shardingContext, callable, "postForceStop", key, value);
+	}
+
+	@Override
+	public void notifyJobEnabled() {
+		callJobBusinessClassMethodEnableOrDisable("onEnabled");
+	}
+
+	@Override
+	public void notifyJobDisabled() {
+		callJobBusinessClassMethodEnableOrDisable("onDisabled");
+	}
+
+	private void callJobBusinessClassMethodTimeoutOrForceStop(final String jobName,
+			SaturnExecutionContext shardingContext, final JavaShardingItemCallable callable, final String methodName,
+			final Integer key, final String value) {
 		String jobClass = shardingContext.getJobConfiguration().getJobClass();
-		log.info("[{}] msg=SaturnJavaJob onTimeout,  jobClass is {} ", jobName, jobClass);
+		log.info("[{}] msg=SaturnJavaJob {},  jobClass is {}", jobName, methodName, jobClass);
 
 		try {
-			if( jobBusinessInstance == null){
-				throw new JobException("the jobClass is not found");
-			}
-			ClassLoader executorClassLoader = saturnExecutorService.getExecutorClassLoader();
-			ClassLoader jobClassLoader = saturnExecutorService.getJobClassLoader();
-			Thread.currentThread().setContextClassLoader(jobClassLoader);
-			try {
-				Class<?> saturnJobExecutionContextClazz = jobClassLoader
-						.loadClass(SaturnJobExecutionContext.class.getCanonicalName());
-
-				jobBusinessInstance.getClass()
-						.getMethod("onTimeout", String.class, Integer.class, String.class,
-								saturnJobExecutionContextClazz)
-						.invoke(jobBusinessInstance, jobName, key, value, callable.getContextForJob(jobClassLoader));
-			} finally {
-				Thread.currentThread().setContextClassLoader(executorClassLoader);
-			}
+			new JobBusinessClassMethodCaller() {
+				@Override
+				protected Object internalCall(ClassLoader jobClassLoader, Class<?> saturnJobExecutionContextClazz)
+						throws Exception {
+					return jobBusinessInstance.getClass()
+							.getMethod(methodName, String.class, Integer.class, String.class,
+									saturnJobExecutionContextClazz).invoke(jobBusinessInstance, jobName, key, value,
+									callable.getContextForJob(jobClassLoader));
+				}
+			}.call(jobBusinessInstance, saturnExecutorService);
 		} catch (Exception e) {
 			logBusinessExceptionIfNecessary(jobName, e);
 		}
 	}
-	
-	public void beforeTimeout(String jobName, Integer key, String value, SaturnExecutionContext shardingContext,
-			JavaShardingItemCallable callable) {
-		String jobClass = shardingContext.getJobConfiguration().getJobClass();
-		log.info("[{}] msg=SaturnJavaJob beforeTimeout,  jobClass is {} ", jobName, jobClass);
 
+	private void callJobBusinessClassMethodEnableOrDisable(final String methodName) {
+		String jobClass = configService.getJobConfiguration().getJobClass();
+		log.info("[{}] msg=SaturnJavaJob {},  jobClass is {}", jobName, methodName, jobClass);
 		try {
-			if( jobBusinessInstance == null){
-				throw new JobException("the jobClass is not found");
-			}
-			ClassLoader executorClassLoader = saturnExecutorService.getExecutorClassLoader();
-			ClassLoader jobClassLoader = saturnExecutorService.getJobClassLoader();
-			Thread.currentThread().setContextClassLoader(jobClassLoader);
-			try {
-				Class<?> saturnJobExecutionContextClazz = jobClassLoader
-						.loadClass(SaturnJobExecutionContext.class.getCanonicalName());
-
-				jobBusinessInstance.getClass()
-						.getMethod("beforeTimeout", String.class, Integer.class, String.class,
-								saturnJobExecutionContextClazz)
-						.invoke(jobBusinessInstance, jobName, key, value, callable.getContextForJob(jobClassLoader));
-			} finally {
-				Thread.currentThread().setContextClassLoader(executorClassLoader);
-			}
-		} catch (Exception e) {
-			logBusinessExceptionIfNecessary(jobName, e);
-		}
-	}
-
-	public void postForceStop(String jobName, Integer key, String value, SaturnExecutionContext shardingContext,
-			JavaShardingItemCallable callable) {
-		String jobClass = shardingContext.getJobConfiguration().getJobClass();
-		log.info("[{}] msg=SaturnJavaJob postForceStop,  jobClass is {} ", jobName, jobClass);
-
-		try {
-			if( jobBusinessInstance == null){
-				throw new JobException("the jobClass is not found");
-			}
-			ClassLoader executorClassLoader = saturnExecutorService.getExecutorClassLoader();
-			ClassLoader jobClassLoader = saturnExecutorService.getJobClassLoader();
-			
-			Thread.currentThread().setContextClassLoader(jobClassLoader);
-			try {
-				Class<?> saturnJobExecutionContextClazz = jobClassLoader
-						.loadClass(SaturnJobExecutionContext.class.getCanonicalName());
-
-				jobBusinessInstance.getClass()
-						.getMethod("postForceStop", String.class, Integer.class, String.class,
-								saturnJobExecutionContextClazz)
-						.invoke(jobBusinessInstance, jobName, key, value, callable.getContextForJob(jobClassLoader));
-			} finally {
-				Thread.currentThread().setContextClassLoader(executorClassLoader);
-			}
+			new JobBusinessClassMethodCaller() {
+				@Override
+				protected Object internalCall(ClassLoader jobClassLoader, Class<?> saturnJobExecutionContextClazz)
+						throws Exception {
+					return jobBusinessInstance.getClass().getMethod(methodName, String.class)
+							.invoke(jobBusinessInstance, jobName);
+				}
+			}.call(jobBusinessInstance, saturnExecutorService);
 		} catch (Exception e) {
 			logBusinessExceptionIfNecessary(jobName, e);
 		}
@@ -313,6 +312,11 @@ public class SaturnJavaJob extends CrondJob {
 
 	@Override
 	public void onTimeout(int item) {
+	}
+
+	@Override
+	public void onNeedRaiseAlarm(int item, String alarmMessage) {
+		// TODO: need to raise alarm by implementor
 	}
 
 }
