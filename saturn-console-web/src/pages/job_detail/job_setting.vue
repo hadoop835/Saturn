@@ -41,7 +41,7 @@
                             </el-col>
                             <el-col :span="11">
                                 <el-form-item prop="localMode" label="本地模式">
-                                    <el-switch v-model="jobSettingInfo.localMode"></el-switch>
+                                    <el-switch v-model="jobSettingInfo.localMode" @change="localModeChange"></el-switch>
                                 </el-form-item>
                             </el-col>
                         </el-row>
@@ -157,18 +157,28 @@
                                 </el-form-item>
                             </el-col>
                         </el-row>
-                        <el-row :gutter="20">
-                            <el-col :span="7">
+                        <el-row :gutter="10">
+                            <el-col :span="6">
                                 <el-form-item prop="showNormalLog" label="控制台输出日志">
                                     <el-switch v-model="jobSettingInfo.showNormalLog"></el-switch>
                                 </el-form-item>
                             </el-col>
-                            <el-col :span="7">
+                            <el-col :span="5">
                                 <el-form-item prop="enabledReport" label="上报运行状态">
                                     <el-switch v-model="jobSettingInfo.enabledReport"></el-switch>
                                 </el-form-item>
                             </el-col>
-                            <el-col :span="7" v-if="jobSettingInfo.jobType === 'MSG_JOB'">
+                            <el-col :span="5" v-if="jobSettingInfo.jobType !== 'MSG_JOB'">
+                                <el-form-item prop="failover" label="failover">
+                                    <el-switch v-model="jobSettingInfo.failover" title="本地模式不可编辑" :disabled="jobSettingInfo.localMode"></el-switch>
+                                </el-form-item>
+                            </el-col>
+                            <el-col :span="5" v-if="jobSettingInfo.jobType !== 'MSG_JOB'">
+                                <el-form-item prop="rerun" label="超时重跑">
+                                    <el-switch v-model="jobSettingInfo.rerun"></el-switch>
+                                </el-form-item>
+                            </el-col>
+                            <el-col :span="6" v-if="jobSettingInfo.jobType === 'MSG_JOB'">
                                 <el-form-item prop="useSerial" label="串行消费">
                                     <el-switch v-model="jobSettingInfo.useSerial"></el-switch>
                                 </el-form-item>
@@ -195,7 +205,7 @@
                         <el-row v-if="jobSettingInfo.jobType !== 'MSG_JOB'">
                             <el-col :span="22">
                                 <el-form-item prop="pausePeriodDate" label="暂停日期段">
-                                    <el-tooltip popper-class="form-tooltip" content="日期时间段，支持多个日期段，逗号隔开。例如03/12-03/15,11/23-12/25。当日期为空，时间段不为空，表示每天那些时间段都暂停" placement="bottom">
+                                    <el-tooltip popper-class="form-tooltip" content="日期时间段，支持多个日期段。例如03/12-03/15。当日期为空，时间段不为空，表示每天那些时间段都暂停" placement="bottom">
                                         <InputTags :dynamic-tags="jobSettingInfo.pausePeriodDate" title="日期段"></InputTags>
                                     </el-tooltip>
                                 </el-form-item>
@@ -204,8 +214,8 @@
                         <el-row v-if="jobSettingInfo.jobType !== 'MSG_JOB'">
                             <el-col :span="22">
                                 <el-form-item prop="pausePeriodTime" label="暂停时间段">
-                                    <el-tooltip popper-class="form-tooltip" content="日期时间段，支持多个时间段，逗号隔开，例如12:23-13:23,16:00-17:00。当日期为不空，时间段为空，表示那些日期段24小时都暂停。针对跨日的时间段，
-                                    编辑时需要分成2个段，以23:00-03:00为例，需写成23:00-23:59,00:00-03:00" placement="bottom">
+                                    <el-tooltip popper-class="form-tooltip" content="日期时间段，支持多个时间段。例如12:23-13:23。当日期为不空，时间段为空，表示那些日期段24小时都暂停。针对跨日的时间段，
+                                    编辑时需要分成2个段，以23:00-03:00为例，需写成23:00-23:59和00:00-03:00" placement="bottom">
                                         <InputTags :dynamic-tags="jobSettingInfo.pausePeriodTime" title="时间段"></InputTags>
                                     </el-tooltip>
                                 </el-form-item>
@@ -238,6 +248,11 @@ export default {
     };
   },
   methods: {
+    localModeChange(value) {
+      if (value) {
+        this.jobSettingInfo.failover = false;
+      }
+    },
     checkAndForecastCron() {
       const cronData = {
         timeZone: this.jobSettingInfo.timeZone,

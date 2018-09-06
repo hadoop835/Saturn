@@ -81,10 +81,14 @@ public class JobServiceImpl implements JobService {
 	public static final String CONFIG_ITEM_DEPENDENCIES = "dependencies";
 	public static final String CONFIG_ITEM_GROUPS = "groups";
 	public static final String CONFIG_ITEM_JOB_CLASS = "jobClass";
+	public static final String CONFIG_ITEM_RERUN = "rerun";
+	public static final String CONFIG_ITEM_HAS_RERUN = "hasRerun";
 	private static final Logger log = LoggerFactory.getLogger(JobServiceImpl.class);
 	private static final int DEFAULT_MAX_JOB_NUM = 100;
 	private static final int DEFAULT_INTERVAL_TIME_OF_ENABLED_REPORT = 5;
+	private static final int MAX_ZNODE_DATA_LENGTH = 1048576;
 	private static final String ERR_MSG_PENDING_STATUS = "job:[{}] item:[{}] on executor:[{}] execution status is PENDING as {}";
+	private static final String ERR_MSG_TOO_LONG_TO_DISPLAY = "Not display the log as the length is out of max length";
 
 	@Resource
 	private RegistryCenterService registryCenterService;
@@ -942,6 +946,13 @@ public class JobServiceImpl implements JobService {
 				jobConfig.getGroups());
 		curatorFrameworkOp.fillJobNodeIfNotExist(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_JOB_CLASS),
 				jobConfig.getJobClass());
+		//For失败重跑机制，往作业的config节点添加两个子节点
+		//rerun代表是否配置了重跑功能
+		//hasRerun代表是否已经重跑过
+		curatorFrameworkOp
+				.fillJobNodeIfNotExist(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_RERUN), jobConfig.getRerun());
+		curatorFrameworkOp.fillJobNodeIfNotExist(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_HAS_RERUN), false);
+		//For失败重跑机制 END
 	}
 
 	@Override
@@ -1218,6 +1229,26 @@ public class JobServiceImpl implements JobService {
 		}
 		jobConfig.setTimeZone(timeZone);
 
+		boolean failover = false;
+		String failoverStr = getContents(rowCells, 27);
+		if (failoverStr != null && !failoverStr.trim().isEmpty()) {
+			failover = Boolean.valueOf(failoverStr);
+		}
+		if (jobConfig.getLocalMode() && failover == true) {
+			throw new SaturnJobConsoleException(ERROR_CODE_BAD_REQUEST,
+					createExceptionMessage(sheetNumber, rowNumber, 27, "本地模式不支持failover"));
+		}
+		jobConfig.setFailover(failover);
+
+
+		boolean rerun = false;
+		String rerunStr = getContents(rowCells, 28);
+		if (rerunStr != null && !rerunStr.trim().isEmpty()) {
+			rerun = Boolean.valueOf(rerunStr);
+		}
+		jobConfig.setRerun(rerun);
+
+
 		return jobConfig;
 	}
 
@@ -1319,6 +1350,10 @@ public class JobServiceImpl implements JobService {
 						.getData(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_TIMEOUT_4_ALARM_SECONDS))));
 				sheet1.addCell(new Label(26, i + 1,
 						curatorFrameworkOp.getData(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_TIME_ZONE))));
+				sheet1.addCell(new Label(27, i + 1,
+						curatorFrameworkOp.getData(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_FAILOVER))));
+				sheet1.addCell(new Label(28, i + 1,
+						curatorFrameworkOp.getData(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_RERUN))));
 			}
 		}
 	}
@@ -1660,7 +1695,9 @@ public class JobServiceImpl implements JobService {
 					.replaceIfChanged(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_LOCAL_MODE),
 							newJobConfig4DB.getLocalMode(), changeCount)
 					.replaceIfChanged(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_USE_SERIAL),
-							newJobConfig4DB.getUseSerial(), changeCount);
+							newJobConfig4DB.getUseSerial(), changeCount)
+					.replaceIfChanged(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_RERUN),
+							newJobConfig4DB.getRerun(), changeCount);
 			// 当enabledReport关闭上报时，要清理execution节点
 			if (newJobConfig4DB.getEnabledReport() != null && !newJobConfig4DB.getEnabledReport()) {
 				log.info("the switch of enabledReport set to false, now deleteJob the execution zk node");
@@ -1668,6 +1705,11 @@ public class JobServiceImpl implements JobService {
 				if (curatorFrameworkOp.checkExists(executionNodePath)) {
 					curatorFrameworkOp.deleteRecursive(executionNodePath);
 				}
+			}
+			//当关闭重跑功能情况下，把过往的hasRerun记录设置为false(清楚掉记录)
+			if (newJobConfig4DB.getRerun() == false) {
+				log.info("the rerun function has closed, thus set hasReun to false");
+				curatorFrameworkOp.update(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_HAS_RERUN), false);
 			}
 		} catch (Exception e) {
 			log.error("update settings to zk failed: {}", e);
@@ -1995,7 +2037,13 @@ public class JobServiceImpl implements JobService {
 	@Override
 	public String getExecutionLog(String namespace, String jobName, String jobItem) throws SaturnJobConsoleException {
 		CuratorFrameworkOp curatorFrameworkOp = registryCenterService.getCuratorFrameworkOp(namespace);
-		return curatorFrameworkOp.getData(JobNodePath.getExecutionNodePath(jobName, jobItem, "jobLog"));
+		String jobLogNodePath = JobNodePath.getExecutionNodePath(jobName, jobItem, "jobLog");
+		Stat stat = curatorFrameworkOp.getStat(jobLogNodePath);
+		if (stat.getDataLength() > MAX_ZNODE_DATA_LENGTH) {
+			return ERR_MSG_TOO_LONG_TO_DISPLAY;
+		}
+
+		return curatorFrameworkOp.getData(jobLogNodePath);
 	}
 
 	private void updateReportNodeAndWait(String jobName, CuratorFrameworkOp curatorFrameworkOp, long sleepInMill) {
