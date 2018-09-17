@@ -22,8 +22,6 @@ public class AbstractAlarmJob {
 
 	protected String jobDegree;
 
-	protected boolean rerun;
-
 	public AbstractAlarmJob() {
 	}
 
@@ -32,7 +30,6 @@ public class AbstractAlarmJob {
 		this.domainName = domainName;
 		this.nns = nns;
 		this.degree = degree;
-		this.rerun = false;
 	}
 
 	public String getJobName() {
@@ -76,11 +73,4 @@ public class AbstractAlarmJob {
 		this.jobDegree = jobDegree;
 	}
 
-	public boolean isRerun() {
-		return rerun;
-	}
-
-	public void setRerun(boolean rerun) {
-		this.rerun = rerun;
-	}
 }

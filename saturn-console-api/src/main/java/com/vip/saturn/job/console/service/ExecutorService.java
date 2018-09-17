@@ -48,7 +48,8 @@ public interface ExecutorService {
 	 * @param executorName 目标executor
 	 * @return executor分配信息
 	 */
-	ServerAllocationInfo getExecutorAllocation(String namespace, String executorName) throws SaturnJobConsoleException;
+	ServerAllocationInfo getExecutorAllocation(String namespace, String executorName)
+			throws SaturnJobConsoleException;
 
 	/**
 	 * 移除离线的executor.

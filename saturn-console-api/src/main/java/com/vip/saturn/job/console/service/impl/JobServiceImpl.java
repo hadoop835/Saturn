@@ -82,11 +82,11 @@ public class JobServiceImpl implements JobService {
 	public static final String CONFIG_ITEM_GROUPS = "groups";
 	public static final String CONFIG_ITEM_JOB_CLASS = "jobClass";
 	public static final String CONFIG_ITEM_RERUN = "rerun";
-	public static final String CONFIG_ITEM_HAS_RERUN = "hasRerun";
 	private static final Logger log = LoggerFactory.getLogger(JobServiceImpl.class);
 	private static final int DEFAULT_MAX_JOB_NUM = 100;
 	private static final int DEFAULT_INTERVAL_TIME_OF_ENABLED_REPORT = 5;
-	private static final int MAX_ZNODE_DATA_LENGTH = 1048576;
+	// 最大允许显示的job log为zk默认的max jute buffer size
+	private static final int DEFAULT_MAX_ZNODE_DATA_LENGTH = 1048576;
 	private static final String ERR_MSG_PENDING_STATUS = "job:[{}] item:[{}] on executor:[{}] execution status is PENDING as {}";
 	private static final String ERR_MSG_TOO_LONG_TO_DISPLAY = "Not display the log as the length is out of max length";
 
@@ -140,6 +140,7 @@ public class JobServiceImpl implements JobService {
 		}
 		return isAllShardsFinished;
 	}
+
 
 	@Override
 	public List<String> getGroups(String namespace) {
@@ -577,6 +578,7 @@ public class JobServiceImpl implements JobService {
 		if (jobConfig.getJobMode() != null && jobConfig.getJobMode().startsWith(JobMode.SYSTEM_PREFIX)) {
 			throw new SaturnJobConsoleException(ERROR_CODE_BAD_REQUEST, "作业模式有误，不能添加系统作业");
 		}
+
 	}
 
 	private void validateCronFieldOfJobConfig(JobConfig jobConfig) throws SaturnJobConsoleException {
@@ -678,10 +680,40 @@ public class JobServiceImpl implements JobService {
 		saveJobConfigToZk(jobConfig, curatorFrameworkOp);
 	}
 
+	/**
+	 * 对作业配置的一些属性进行矫正
+	 */
+	private void correctConfigValueIfNeeded(JobConfig jobConfig) {
+		jobConfig.setDefaultValues();
+		jobConfig.setEnabled(false);
+		if (JobType.SHELL_JOB.name().equals(jobConfig.getJobType())) {
+			jobConfig.setJobClass("");
+		}
+		if (JobType.MSG_JOB.name().equals(jobConfig.getJobType())) {
+			jobConfig.setFailover(false);
+			jobConfig.setRerun(false);
+		}
+		if (jobConfig.getLocalMode()) {
+			jobConfig.setFailover(false);
+		}
+		boolean enabledReport = getEnabledReport(jobConfig.getJobType(), jobConfig.getCron(), jobConfig.getTimeZone());
+		jobConfig.setEnabledReport(enabledReport);
+		if (!enabledReport) {
+			jobConfig.setFailover(false);
+			jobConfig.setRerun(false);
+		}
+	}
+
 	@Override
 	public int getMaxJobNum() {
 		int result = systemConfigService.getIntegerValue(SystemConfigProperties.MAX_JOB_NUM, DEFAULT_MAX_JOB_NUM);
 		return result <= 0 ? DEFAULT_MAX_JOB_NUM : result;
+	}
+
+	private int getMaxZnodeDataLength() {
+		int result = systemConfigService
+				.getIntegerValue(SystemConfigProperties.MAX_ZNODE_DATA_LENGTH, DEFAULT_MAX_ZNODE_DATA_LENGTH);
+		return result <= 0 ? DEFAULT_MAX_ZNODE_DATA_LENGTH : result;
 	}
 
 	@Override
@@ -792,20 +824,6 @@ public class JobServiceImpl implements JobService {
 	public void persistJobFromDB(JobConfig jobConfig, CuratorFrameworkOp curatorFrameworkOp) {
 		jobConfig.setDefaultValues();
 		saveJobConfigToZk(jobConfig, curatorFrameworkOp);
-	}
-
-	/**
-	 * 对作业配置的一些属性进行矫正
-	 */
-	private void correctConfigValueIfNeeded(JobConfig jobConfig) {
-		jobConfig.setDefaultValues();
-		jobConfig.setEnabled(false);
-		jobConfig.setFailover(!jobConfig.getLocalMode());
-		if (JobType.SHELL_JOB.name().equals(jobConfig.getJobType())) {
-			jobConfig.setJobClass("");
-		}
-		jobConfig.setEnabledReport(
-				getEnabledReport(jobConfig.getJobType(), jobConfig.getCron(), jobConfig.getTimeZone()));
 	}
 
 	/**
@@ -946,13 +964,8 @@ public class JobServiceImpl implements JobService {
 				jobConfig.getGroups());
 		curatorFrameworkOp.fillJobNodeIfNotExist(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_JOB_CLASS),
 				jobConfig.getJobClass());
-		//For失败重跑机制，往作业的config节点添加两个子节点
-		//rerun代表是否配置了重跑功能
-		//hasRerun代表是否已经重跑过
 		curatorFrameworkOp
 				.fillJobNodeIfNotExist(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_RERUN), jobConfig.getRerun());
-		curatorFrameworkOp.fillJobNodeIfNotExist(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_HAS_RERUN), false);
-		//For失败重跑机制 END
 	}
 
 	@Override
@@ -1229,25 +1242,39 @@ public class JobServiceImpl implements JobService {
 		}
 		jobConfig.setTimeZone(timeZone);
 
-		boolean failover = false;
+		Boolean failover = null;
 		String failoverStr = getContents(rowCells, 27);
-		if (failoverStr != null && !failoverStr.trim().isEmpty()) {
-			failover = Boolean.valueOf(failoverStr);
-		}
-		if (jobConfig.getLocalMode() && failover == true) {
-			throw new SaturnJobConsoleException(ERROR_CODE_BAD_REQUEST,
-					createExceptionMessage(sheetNumber, rowNumber, 27, "本地模式不支持failover"));
+		if (StringUtils.isNotBlank(failoverStr)) {
+			failover = Boolean.valueOf(failoverStr.trim());
+			if (failover) {
+				if (jobConfig.getLocalMode()) {
+					throw new SaturnJobConsoleException(ERROR_CODE_BAD_REQUEST,
+							createExceptionMessage(sheetNumber, rowNumber, 28, "本地模式不支持failover"));
+				}
+				if (jobType.equals(JobType.MSG_JOB.name())) {
+					throw new SaturnJobConsoleException(ERROR_CODE_BAD_REQUEST,
+							createExceptionMessage(sheetNumber, rowNumber, 28, "消息作业不支持failover"));
+				}
+				// 如果不上报运行状态，则强制设置为false
+				// 上报运行状态失效，由算法决定是否上报，看下面setEnabledReport时的逻辑，看addJob
+			}
 		}
 		jobConfig.setFailover(failover);
 
-
-		boolean rerun = false;
+		Boolean rerun = null;
 		String rerunStr = getContents(rowCells, 28);
-		if (rerunStr != null && !rerunStr.trim().isEmpty()) {
-			rerun = Boolean.valueOf(rerunStr);
+		if (StringUtils.isNotBlank(rerunStr)) {
+			rerun = Boolean.valueOf(rerunStr.trim());
+			if (rerun) {
+				if (jobType.equals(JobType.MSG_JOB.name())) {
+					throw new SaturnJobConsoleException(ERROR_CODE_BAD_REQUEST,
+							createExceptionMessage(sheetNumber, rowNumber, 29, "消息作业不支持rerun"));
+				}
+				// 如果不上报运行状态，则强制设置为false
+				// 上报运行状态失效，由算法决定是否上报，看下面setEnabledReport时的逻辑，看addJob
+			}
 		}
 		jobConfig.setRerun(rerun);
-
 
 		return jobConfig;
 	}
@@ -1427,6 +1454,14 @@ public class JobServiceImpl implements JobService {
 		Label timeZoneLabel = new Label(26, 0, "时区");
 		setCellComment(timeZoneLabel, "作业运行时区");
 		sheet1.addCell(timeZoneLabel);
+
+		Label failover = new Label(27, 0, "failover");
+		setCellComment(failover, "failover");
+		sheet1.addCell(failover);
+
+		Label rerun = new Label(28, 0, "rerun");
+		setCellComment(rerun, "rerun");
+		sheet1.addCell(rerun);
 	}
 
 	protected void setCellComment(WritableCell cell, String comment) {
@@ -1637,6 +1672,20 @@ public class JobServiceImpl implements JobService {
 		SaturnBeanUtils.copyPropertiesIgnoreNull(jobConfig, newJobConfig4DB);
 		// 对不符合要求的字段重新设置为默认值
 		newJobConfig4DB.setDefaultValues();
+		// 消息作业不failover不rerun
+		if (JobType.MSG_JOB.name().equals(newJobConfig4DB.getJobType())) {
+			newJobConfig4DB.setFailover(false);
+			newJobConfig4DB.setRerun(false);
+		}
+		// 本地模式不failover
+		if (newJobConfig4DB.getLocalMode()) {
+			newJobConfig4DB.setFailover(false);
+		}
+		// 不上报作业不failover不rerun
+		if (!newJobConfig4DB.getEnabledReport()) {
+			newJobConfig4DB.setFailover(false);
+			newJobConfig4DB.setRerun(false);
+		}
 
 		// 和zk数据对比，如果有更新，则更新数据库和zk
 		CuratorRepository.CuratorFrameworkOp curatorFrameworkOp = registryCenterService
@@ -1705,11 +1754,6 @@ public class JobServiceImpl implements JobService {
 				if (curatorFrameworkOp.checkExists(executionNodePath)) {
 					curatorFrameworkOp.deleteRecursive(executionNodePath);
 				}
-			}
-			//当关闭重跑功能情况下，把过往的hasRerun记录设置为false(清楚掉记录)
-			if (newJobConfig4DB.getRerun() == false) {
-				log.info("the rerun function has closed, thus set hasReun to false");
-				curatorFrameworkOp.update(JobNodePath.getConfigNodePath(jobName, CONFIG_ITEM_HAS_RERUN), false);
 			}
 		} catch (Exception e) {
 			log.error("update settings to zk failed: {}", e);
@@ -2039,7 +2083,9 @@ public class JobServiceImpl implements JobService {
 		CuratorFrameworkOp curatorFrameworkOp = registryCenterService.getCuratorFrameworkOp(namespace);
 		String jobLogNodePath = JobNodePath.getExecutionNodePath(jobName, jobItem, "jobLog");
 		Stat stat = curatorFrameworkOp.getStat(jobLogNodePath);
-		if (stat.getDataLength() > MAX_ZNODE_DATA_LENGTH) {
+		if (stat.getDataLength() > getMaxZnodeDataLength()) {
+			log.warn("job log of job={} item={} exceed max length, will not display the original log", jobName,
+					jobItem);
 			return ERR_MSG_TOO_LONG_TO_DISPLAY;
 		}
 

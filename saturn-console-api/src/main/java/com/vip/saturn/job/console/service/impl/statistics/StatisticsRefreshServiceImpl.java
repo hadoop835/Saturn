@@ -15,7 +15,6 @@ import com.vip.saturn.job.console.service.impl.statistics.analyzer.*;
 import com.vip.saturn.job.console.utils.ConsoleThreadFactory;
 import com.vip.saturn.job.console.utils.JobNodePath;
 import com.vip.saturn.job.console.utils.StatisticsTableKeyConstant;
-import com.vip.saturn.job.integrate.exception.ReportAlarmException;
 import com.vip.saturn.job.integrate.service.ReportAlarmService;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -34,13 +33,10 @@ import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import javax.annotation.Resource;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.*;
 import java.util.concurrent.ExecutorService;
-
-import static com.vip.saturn.job.console.service.impl.JobServiceImpl.CONFIG_ITEM_HAS_RERUN;
 
 /**
  * @author timmy.hu
@@ -48,8 +44,6 @@ import static com.vip.saturn.job.console.service.impl.JobServiceImpl.CONFIG_ITEM
 public class StatisticsRefreshServiceImpl implements StatisticsRefreshService {
 
 	private static final Logger log = LoggerFactory.getLogger(StatisticsRefreshServiceImpl.class);
-
-	private static final String SOURCE_TYPE = "saturn";
 
 	private static final int CONNECT_TIMEOUT_MS = 10000;
 
@@ -63,8 +57,6 @@ public class StatisticsRefreshServiceImpl implements StatisticsRefreshService {
 
 	private Map<String/** domainName_jobName_shardingItemStr **/
 			, AbnormalShardingState /** abnormal sharding state */> abnormalShardingStateCache = new ConcurrentHashMap<>();
-
-	private List<Object> analyzeStatisticsObserver = new ArrayList<>();
 
 	@Resource
 	private SaturnStatisticsService saturnStatisticsService;
@@ -86,19 +78,11 @@ public class StatisticsRefreshServiceImpl implements StatisticsRefreshService {
 
 	private ExecutorService statExecutorService;
 
-	@Resource
-	private RestApiService restApiService;
-
 	@PostConstruct
 	public void init() {
 		initStatExecutorService();
 		startRefreshStatisticsTimer();
 		startCleanAbnormalShardingCacheTimer();
-		addReportAlarmObserver();
-	}
-
-	private void addReportAlarmObserver() {
-		this.analyzeStatisticsObserver.add(this.reportAlarmService);
 	}
 
 	@PreDestroy
@@ -213,89 +197,9 @@ public class StatisticsRefreshServiceImpl implements StatisticsRefreshService {
 		}
 	}
 
-	public void postRefreshStatistics2DB(StatisticsModel statisticsModel) {
-
-		Map<String, List<Map<String, String>>> abnormalJobMap = new HashMap<>();
-		List<AbnormalJob> abnormalJobs = statisticsModel.getOutdatedNoRunningJobAnalyzer().getOutdatedNoRunningJobs();
-
-		List<AbnormalJob> jobsNeedToReport = new ArrayList<>();
-		for (AbnormalJob job : abnormalJobs) {
-			if (needRetry(job) && !jobHasRerun(job)) {
-				runAtOnce(job.getDomainName(), job.getJobName());
-				addRetryHistory(job);
-			} else {
-				jobsNeedToReport.add(job);
-			}
-		}
-
-		for (AbnormalJob job : jobsNeedToReport) {
-			if (job.isRead()) {
-				continue;
-			}
-			if (!abnormalJobMap.containsKey(job.getDomainName())) {
-				abnormalJobMap.put(job.getDomainName(), new ArrayList<Map<String, String>>());
-			}
-			SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-			format.setTimeZone(TimeZone.getTimeZone(job.getTimeZone()));
-			String shouldFiredTimeFormatted = job.getTimeZone() + " " + format.format(job.getNextFireTime());
-			Map<String, String> customMap = new HashMap<>(4);
-			customMap.put("sourceType", SOURCE_TYPE);
-			customMap.put("domain", job.getDomainName());
-			customMap.put("job", job.getJobName());
-			customMap.put("shouldFiredTime", shouldFiredTimeFormatted);
-			abnormalJobMap.get(job.getDomainName()).add(customMap);
-		}
-
-		for (String namespace : abnormalJobMap.keySet()) {
-			List<Map<String, String>> jobs = abnormalJobMap.get(namespace);
-			try {
-				reportAlarmService.dashboardAbnormalBatchJobs(namespace, jobs);
-			} catch (ReportAlarmException e) {
-				log.error(e.getMessage(), e);
-			}
-		}
-
+	protected void postRefreshStatistics2DB(StatisticsModel statisticsModel, ZkCluster zkCluster) {
+		statisticsModel.getOutdatedNoRunningJobAnalyzer().reportAlarmOutdatedNoRunningJobs();
 	}
-
-	private void runAtOnce(String namespace, String jobName) {
-		try {
-			restApiService.runJobAtOnce(namespace, jobName);
-		} catch (SaturnJobConsoleException e) {
-			log.warn("rerun job:{} fail", jobName, e);
-		}
-	}
-
-	private boolean needRetry(AbnormalJob job) {
-		return job.isRerun();
-	}
-
-	private void addRetryHistory(AbnormalJob job) {
-		try {
-			boolean exist = registryCenterService.getCuratorFrameworkOp(job.getDomainName())
-					.checkExists(JobNodePath.getConfigNodePath(job.getJobName(), CONFIG_ITEM_HAS_RERUN));
-			if (exist) {
-				registryCenterService.getCuratorFrameworkOp(job.getDomainName())
-						.update(JobNodePath.getConfigNodePath(job.getJobName(), CONFIG_ITEM_HAS_RERUN), true);
-			} else {
-				registryCenterService.getCuratorFrameworkOp(job.getDomainName())
-						.fillJobNodeIfNotExist(JobNodePath.getConfigNodePath(job.getJobName(), CONFIG_ITEM_HAS_RERUN),
-								true);
-			}
-		} catch (SaturnJobConsoleException e) {
-			log.warn("update rerun status for job:{} to zk fail", job.getJobName(), e);
-		}
-	}
-
-	private boolean jobHasRerun(AbnormalJob job) {
-		try {
-			String hasRerun = registryCenterService.getCuratorFrameworkOp(job.getDomainName())
-					.getData(JobNodePath.getConfigNodePath(job.getJobName(), CONFIG_ITEM_HAS_RERUN));
-			return hasRerun == null ? false : Boolean.valueOf(hasRerun);
-		} catch (SaturnJobConsoleException e) {
-			return false;
-		}
-	}
-
 
 	private void forwardDashboardRefreshToRemote(String zkClusterKey) throws SaturnJobConsoleException {
 		CloseableHttpClient httpClient = null;
@@ -361,7 +265,7 @@ public class StatisticsRefreshServiceImpl implements StatisticsRefreshService {
 				statExecutorService.invokeAll(callableList);
 			}
 			statisticsPersistence.persist(statisticsModel, zkCluster);
-			postRefreshStatistics2DB(statisticsModel);
+			postRefreshStatistics2DB(statisticsModel, zkCluster);
 		} catch (InterruptedException e) {
 			log.warn("the refreshStatistics2DB thread is interrupted", e);
 			Thread.currentThread().interrupt();
@@ -465,6 +369,7 @@ public class StatisticsRefreshServiceImpl implements StatisticsRefreshService {
 		OutdatedNoRunningJobAnalyzer outdatedNoRunningJobAnalyzer = new OutdatedNoRunningJobAnalyzer();
 		outdatedNoRunningJobAnalyzer.setAbnormalShardingStateCache(abnormalShardingStateCache);
 		outdatedNoRunningJobAnalyzer.setReportAlarmService(reportAlarmService);
+		outdatedNoRunningJobAnalyzer.setJobService(jobService);
 		statisticsModel.setOutdatedNoRunningJobAnalyzer(outdatedNoRunningJobAnalyzer);
 
 		UnableFailoverJobAnalyzer unableFailoverJobAnalyzer = new UnableFailoverJobAnalyzer();

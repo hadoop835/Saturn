@@ -19,7 +19,9 @@ import org.springframework.util.CollectionUtils;
 
 import javax.annotation.Resource;
 import java.io.File;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -146,13 +148,13 @@ public class ExecutorServiceImpl implements ExecutorService {
 			String sharding = curatorFrameworkOp
 					.getData(JobNodePath.getServerNodePath(jobName, executorName, "sharding"));
 			if (StringUtils.isNotBlank(sharding)) {
+				JobStatus jobStatus = jobService.getJobStatus(namespace, jobName);
+
 				// 作业状态为STOPPED的即使有残留分片也不显示该分片
-				if (JobStatus.STOPPED.equals(jobService.getJobStatus(namespace, jobName))) {
+				if (JobStatus.STOPPED.equals(jobStatus)) {
 					continue;
 				}
-				// concat executorSharding
-				serverAllocationInfo.getAllocationMap().put(jobName, sharding);
-				// calculate totalLoad
+
 				String loadLevelNode = curatorFrameworkOp.getData(JobNodePath.getConfigNodePath(jobName, "loadLevel"));
 				Integer loadLevel = 1;
 				if (StringUtils.isNotBlank(loadLevelNode)) {
@@ -162,6 +164,12 @@ public class ExecutorServiceImpl implements ExecutorService {
 				int shardingItemNum = sharding.split(",").length;
 				int curJobLoad = shardingItemNum * loadLevel;
 				int totalLoad = serverAllocationInfo.getTotalLoadLevel();
+
+				Map<String, String> jobNameAndStatus = new HashMap<>();
+				jobNameAndStatus.put("jobName", jobName);
+				jobNameAndStatus.put("status", jobStatus.name());
+				jobNameAndStatus.put("sharding", sharding);
+				serverAllocationInfo.getJobStatus().add(jobNameAndStatus);
 				serverAllocationInfo.setTotalLoadLevel(totalLoad + curJobLoad);
 			}
 		}

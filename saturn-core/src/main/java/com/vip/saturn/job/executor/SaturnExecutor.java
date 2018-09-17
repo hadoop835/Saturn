@@ -1,6 +1,5 @@
 package com.vip.saturn.job.executor;
 
-import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.google.common.base.Strings;
 import com.vip.saturn.job.basic.JobRegistry;
@@ -17,6 +16,7 @@ import com.vip.saturn.job.threads.SaturnThreadFactory;
 import com.vip.saturn.job.utils.*;
 import com.vip.saturn.job.utils.StartCheckUtil.StartCheckItem;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpStatus;
 import org.apache.http.StatusLine;
@@ -35,6 +35,7 @@ import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -42,6 +43,10 @@ import static com.vip.saturn.job.internal.config.JobType.JAVA_JOB;
 import static com.vip.saturn.job.internal.config.JobType.SHELL_JOB;
 
 public class SaturnExecutor {
+
+	private static final String DISCOVER_INFO_ZK_CONN_STR = "zkConnStr";
+
+	private static final Set<JobType> ALLOWED_GRACEFUL_SHUTDOWN_TYPES = EnumSet.of(JAVA_JOB, SHELL_JOB);
 
 	private static Logger log;
 
@@ -77,7 +82,7 @@ public class SaturnExecutor {
 
 	private ExecutorService raiseAlarmExecutorService;
 
-	private static final Set<JobType> ALLOWED_GRACEFUL_SHUTDOWN_TYPES = EnumSet.of(JAVA_JOB, SHELL_JOB);
+	private ExecutorService shutdownJobsExecutorService;
 
 	private SaturnExecutor(String namespace, String executorName, ClassLoader executorClassLoader,
 			ClassLoader jobClassLoader) {
@@ -87,6 +92,8 @@ public class SaturnExecutor {
 		this.jobClassLoader = jobClassLoader;
 		this.raiseAlarmExecutorService = Executors
 				.newSingleThreadExecutor(new SaturnThreadFactory(executorName + "-raise-alarm-thread", false));
+		this.shutdownJobsExecutorService = Executors
+				.newCachedThreadPool(new SaturnThreadFactory(executorName + "-shutdownJobs-thread", true));
 		initRestartThread();
 		registerShutdownHandler();
 	}
@@ -143,6 +150,7 @@ public class SaturnExecutor {
 						shutdownGracefully0();
 						restartThread.interrupt();
 						raiseAlarmExecutorService.shutdownNow();
+						shutdownJobsExecutorService.shutdownNow();
 						isShutdown = true;
 					} finally {
 						shutdownLock.unlock();
@@ -209,7 +217,7 @@ public class SaturnExecutor {
 		}
 	}
 
-	private String discoverZK() throws Exception {
+	private Map<String, String> discover() throws Exception {
 		if (SystemEnvProperties.VIP_SATURN_CONSOLE_URI_LIST.isEmpty()) {
 			throw new Exception("Please configure the parameter " + SystemEnvProperties.NAME_VIP_SATURN_CONSOLE_URI
 					+ " with env or -D");
@@ -218,7 +226,7 @@ public class SaturnExecutor {
 		int size = SystemEnvProperties.VIP_SATURN_CONSOLE_URI_LIST.size();
 		for (int i = 0; i < size; i++) {
 			String consoleUri = SystemEnvProperties.VIP_SATURN_CONSOLE_URI_LIST.get(i);
-			String url = consoleUri + "/rest/v1/discoverZk?namespace=" + namespace;
+			String url = consoleUri + "/rest/v1/discovery?namespace=" + namespace;
 			CloseableHttpClient httpClient = null;
 			try {
 				httpClient = HttpClientBuilder.create().build();
@@ -231,15 +239,15 @@ public class SaturnExecutor {
 				String responseBody = EntityUtils.toString(httpResponse.getEntity());
 				Integer statusCode = statusLine != null ? statusLine.getStatusCode() : null;
 				if (statusLine != null && statusCode.intValue() == HttpStatus.SC_OK) {
-					String connectionString = JSON.parseObject(responseBody, String.class);
+					Map<String, String> discoveryInfo = JSONObject.parseObject(responseBody, Map.class);
+					String connectionString = discoveryInfo.get(DISCOVER_INFO_ZK_CONN_STR);
 					if (StringUtils.isBlank(connectionString)) {
-						log.warn("ZK connection string is blank！");
+						log.warn("ZK connection string is blank!");
 						continue;
 					}
 
-					log.info("Discover zk connection string successfully. Url: {}, zk connection string: {}", url,
-							connectionString);
-					return connectionString;
+					log.info("Discover successfully. Url: {}, discovery info: {}", url, discoveryInfo);
+					return discoveryInfo;
 				} else {
 					handleDiscoverException(responseBody, statusCode);
 				}
@@ -248,8 +256,8 @@ public class SaturnExecutor {
 				if (e.getCode() != SaturnExecutorExceptionCode.UNEXPECTED_EXCEPTION) {
 					throw e;
 				}
-			} catch (Exception e) {
-				log.error("Fail to discover zk connection. Url: " + url, e);
+			} catch (Throwable t) {
+				log.error("Fail to discover from Saturn Console. Url: " + url, t);
 			} finally {
 				if (httpClient != null) {
 					try {
@@ -262,13 +270,13 @@ public class SaturnExecutor {
 		}
 
 		throw new Exception(
-				"Fail to discover zk connection string! Please make sure that you have added your namespace on Saturn Console.");
+				"Fail to discover from Saturn Console! Please make sure that you have added the target namespace on Saturn Console.");
 	}
 
 	private void handleDiscoverException(String responseBody, Integer statusCode) throws SaturnExecutorException {
 		String errMsgInResponse = obtainErrorResponseMsg(responseBody);
 
-		StringBuilder sb = new StringBuilder("Fail to discover zk connection string. ");
+		StringBuilder sb = new StringBuilder("Fail to discover from saturn console. ");
 		if (StringUtils.isNotBlank(errMsgInResponse)) {
 			sb.append(errMsgInResponse);
 		}
@@ -311,17 +319,18 @@ public class SaturnExecutor {
 			try {
 				StartCheckUtil.add2CheckList(StartCheckItem.ZK, StartCheckItem.UNIQUE, StartCheckItem.JOBKILL);
 
-				log.info("start to discover zk connection string.");
-				String serverLists = discoverZK();
-				if (StringUtils.isBlank(serverLists)) {
+				log.info("start to discover from saturn console");
+				Map<String, String> discoveryInfo = discover();
+				String zkConnectionString = discoveryInfo.get(DISCOVER_INFO_ZK_CONN_STR);
+				if (StringUtils.isBlank(zkConnectionString)) {
 					log.error("zk connection string is blank!");
 					throw new RuntimeException("zk connection string is blank!");
 				}
 
-				serverLists = serverLists.trim();
+				saturnExecutorExtension.postDiscover(discoveryInfo);
 
 				// 初始化注册中心
-				initRegistryCenter(serverLists);
+				initRegistryCenter(zkConnectionString.trim());
 
 				// 检测是否存在仍然有正在运行的SHELL作业
 				log.info("start to check all exist jobs.");
@@ -379,7 +388,7 @@ public class SaturnExecutor {
 			};
 			regCenter.addConnectionStateListener(connectionLostListener);
 
-			//  创建SaturnExecutorService
+			// 创建SaturnExecutorService
 			saturnExecutorService = new SaturnExecutorService(regCenter, executorName, saturnExecutorExtension);
 			saturnExecutorService.setJobClassLoader(jobClassLoader);
 			saturnExecutorService.setExecutorClassLoader(executorClassLoader);
@@ -458,22 +467,44 @@ public class SaturnExecutor {
 		}
 	}
 
-	private void shutdownUnfinishJob() {
+	private void shutdownUnfinishJobs() {
 		Map<String, JobScheduler> schdMap = JobRegistry.getSchedulerMap().get(executorName);
-		if (schdMap != null) {
-			Iterator<String> it = schdMap.keySet().iterator();
-			while (it.hasNext()) {
-				String jobName = it.next();
-				JobScheduler jobScheduler = schdMap.get(jobName);
-				if (jobScheduler != null) {
-					if (!regCenter.isConnected() || jobScheduler.getCurrentConf().isEnabled()) {
-						log.info("[{}] msg=job {} is enabled, force shutdown.", jobName, jobName);
-						jobScheduler.stopJob(true);
+		if (MapUtils.isEmpty(schdMap)) {
+			return;
+		}
+
+		long startTime = System.currentTimeMillis();
+		List<Future<?>> futures = new ArrayList<>();
+		Iterator<String> it = schdMap.keySet().iterator();
+		while (it.hasNext()) {
+			final String jobName = it.next();
+			final JobScheduler jobScheduler = schdMap.get(jobName);
+			if (jobScheduler != null) {
+				futures.add(shutdownJobsExecutorService.submit(new Runnable() {
+					@Override
+					public void run() {
+						try {
+							if (!regCenter.isConnected() || jobScheduler.getCurrentConf().isEnabled()) {
+								log.info("[{}] msg=job {} is enabled, force shutdown.", jobName, jobName);
+								jobScheduler.stopJob(true);
+							}
+							jobScheduler.shutdown(false);
+						} catch (Throwable t) {
+							log.error(String.format("[%s] msg=job %s fail to shutdown", jobName, jobName), t);
+						}
 					}
-					jobScheduler.shutdown(false);
-				}
+				}));
 			}
 		}
+		for (Future<?> future : futures) {
+			try {
+				future.get();
+			} catch (Exception e) {
+				log.error("wait shutdown job error", e);
+			}
+		}
+
+		log.info("Shutdown phase [shutdownUnfinishJobs] took {}ms", System.currentTimeMillis() - startTime);
 	}
 
 	/**
@@ -486,7 +517,7 @@ public class SaturnExecutor {
 			if (saturnExecutorService != null) {
 				saturnExecutorService.unregisterJobsWatcher();
 			}
-			shutdownUnfinishJob();
+			shutdownUnfinishJobs();
 			if (saturnExecutorService != null) {
 				saturnExecutorService.unregisterExecutor();
 			}
@@ -533,7 +564,7 @@ public class SaturnExecutor {
 			TimeoutSchedulerExecutor.shutdownScheduler(executorName);
 			try {
 				blockUntilJobCompletedIfNotTimeout();
-				shutdownUnfinishJob();
+				shutdownUnfinishJobs();
 				JobRegistry.clearExecutor(executorName);
 			} finally {
 				if (connectionLostListener != null) {
@@ -562,7 +593,7 @@ public class SaturnExecutor {
 		if (CollectionUtils.isEmpty(entries)) {
 			return;
 		}
-		long start = System.currentTimeMillis();
+		long startTime = System.currentTimeMillis();
 
 		boolean hasRunning = false;
 		do {
@@ -581,13 +612,13 @@ public class SaturnExecutor {
 					} else {
 						hasRunning = false;
 					}
-				} else {
-					jobScheduler.stopJob(false);
 				}
+				// 其他作业（消息作业）不等，因为在接下来的forceStop是优雅强杀的，即等待一定时间让业务执行再强杀
 			}
 		} while (hasRunning
-				&& System.currentTimeMillis() - start < SystemEnvProperties.VIP_SATURN_SHUTDOWN_TIMEOUT * 1000);
+				&& System.currentTimeMillis() - startTime < SystemEnvProperties.VIP_SATURN_SHUTDOWN_TIMEOUT * 1000);
 
+		log.info("Shutdown phase [blockUntilJobCompletedIfNotTimeout] took {}ms", System.currentTimeMillis() - startTime);
 	}
 
 	protected boolean isAllowedToBeGracefulShutdown(JobConfiguration currentConf) {
@@ -632,6 +663,7 @@ public class SaturnExecutor {
 			shutdownGracefully0();
 			restartThread.interrupt();
 			raiseAlarmExecutorService.shutdownNow();
+			shutdownJobsExecutorService.shutdownNow();
 			ShutdownHandler.removeShutdownCallback(executorName);
 			isShutdown = true;
 		} finally {
@@ -662,4 +694,5 @@ public class SaturnExecutor {
 	public void setNamespace(String namespace) {
 		this.namespace = namespace;
 	}
+
 }
