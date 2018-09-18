@@ -181,7 +181,13 @@
                                 </el-form-item>
                             </el-col>
                             <el-col :span="11">
-                                <el-form-item prop="rerun" label="过时未跑重试">
+                                <el-form-item prop="rerun">
+                                    <div slot="label">
+                                        <span>过时未跑重试</span>
+                                        <el-tooltip placement="top" content="不建议高频作业启动超时重跑" effect="light" popper-class="allocation-popper">
+                                            <i class="fa fa-question-circle"></i>
+                                        </el-tooltip>
+                                    </div>
                                     <el-switch v-model="jobSettingInfo.rerun" title="非上报运行状态不可编辑" :disabled="!jobSettingInfo.enabledReport"></el-switch>
                                 </el-form-item>
                             </el-col>
@@ -301,7 +307,7 @@ export default {
               this.$message.errorMessage('分片参数不能小于作业分片总数!');
             }
           } else {
-            this.$message.errorMessage('作业分片参数有误，对于本地模式的作业，只需要输入如：*=a 即可。');
+            this.$message.errorMessage('作业分片参数有误，对于本地模式的作业，只需要输入如：*=a 即可。非本地模式请参考:0=a,1=b');
           }
         }
       });
@@ -328,6 +334,8 @@ export default {
         if (!this.jobSettingInfo.shardingItemParameters.startsWith('*=')) {
           flag = false;
         }
+      } else if (this.jobSettingInfo.shardingItemParameters.startsWith('*=')) {
+        flag = false;
       }
       return flag;
     },
